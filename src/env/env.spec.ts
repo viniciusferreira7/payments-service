@@ -1,0 +1,77 @@
+import { describe, expect, it } from 'vitest';
+import { envSchema } from './env';
+
+const baseEnv = {
+  DATABASE_URL: 'postgres://user:pass@localhost:5433/payments',
+  DATABASE_USERNAME: 'user',
+  DATABASE_PASSWORD: 'pass',
+  DATABASE_NAME: 'payments',
+  JWT_SECRET: 'secret',
+  JWT_EXPIRES_IN: '1s',
+  RABBITMQ_URL: 'amqp://admin:admin@localhost:5672',
+  RABBITMQ_QUEUE_PAYMENTS: 'payment_queue',
+  RABBITMQ_EXCHANGE: 'payments',
+  OTEL_SERVICE_NAME: 'payments-service',
+  OTEL_EXPORTER_OTLP_ENDPOINT: 'http://localhost:4318',
+};
+
+describe('envSchema', () => {
+  it('applies the NODE_ENV and PORT defaults', () => {
+    const env = envSchema.parse(baseEnv);
+
+    expect(env.NODE_ENV).toBe('dev');
+    expect(env.PORT).toBe(3335);
+  });
+
+  it('defaults the payment order routing key', () => {
+    expect(envSchema.parse(baseEnv).RABBITMQ_ROUTING_KEY_PAYMENT_ORDER).toBe(
+      'payment.order'
+    );
+  });
+
+  it('coerces PORT from a string', () => {
+    const env = envSchema.parse({ ...baseEnv, PORT: '4000' });
+
+    expect(env.PORT).toBe(4000);
+  });
+
+  it('accepts a postgres connection string', () => {
+    expect(envSchema.parse(baseEnv).DATABASE_URL).toBe(baseEnv.DATABASE_URL);
+  });
+
+  it('accepts an amqp connection string', () => {
+    expect(envSchema.parse(baseEnv).RABBITMQ_URL).toBe(baseEnv.RABBITMQ_URL);
+  });
+
+  it('rejects an invalid RABBITMQ_URL', () => {
+    expect(() =>
+      envSchema.parse({ ...baseEnv, RABBITMQ_URL: 'not-a-url' })
+    ).toThrow();
+  });
+
+  it('rejects an empty RABBITMQ_QUEUE_PAYMENTS', () => {
+    expect(() =>
+      envSchema.parse({ ...baseEnv, RABBITMQ_QUEUE_PAYMENTS: '' })
+    ).toThrow();
+  });
+
+  it('rejects an empty RABBITMQ_EXCHANGE', () => {
+    expect(() =>
+      envSchema.parse({ ...baseEnv, RABBITMQ_EXCHANGE: '' })
+    ).toThrow();
+  });
+
+  it('rejects an empty JWT_SECRET', () => {
+    expect(() => envSchema.parse({ ...baseEnv, JWT_SECRET: '' })).toThrow();
+  });
+
+  it('rejects an empty JWT_EXPIRES_IN', () => {
+    expect(() => envSchema.parse({ ...baseEnv, JWT_EXPIRES_IN: '' })).toThrow();
+  });
+
+  it('rejects an unknown NODE_ENV', () => {
+    expect(() =>
+      envSchema.parse({ ...baseEnv, NODE_ENV: 'staging' })
+    ).toThrow();
+  });
+});
