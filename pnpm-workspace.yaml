@@ -1,0 +1,35 @@
+# Supply-chain hardening.
+# Dependency build scripts are blocked by default; anything not listed under
+# `allowBuilds` fails the install (strictDepBuilds) instead of silently warning.
+
+# Refuse versions published less than 7 days ago (in minutes).
+minimumReleaseAge: 10080
+
+# First-party packages are exempt: they are reviewed here, and the quarantine
+# would otherwise block every freshly published version for seven days.
+minimumReleaseAgeExclude:
+  - '@viniciusferreira7/*'
+
+# Pin exact versions instead of writing ranges.
+saveExact: true
+
+# Fail when the local Node/pnpm does not satisfy the `engines` field.
+engineStrict: true
+
+# CI-safe default: install from the lockfile as-is.
+preferFrozenLockfile: true
+
+verifyDepsBeforeRun: false
+
+# Any dependency with an unreviewed lifecycle script fails the install.
+strictDepBuilds: true
+
+allowBuilds:
+  # Telemetry/funding postinstalls — nothing needed at runtime.
+  '@nestjs/core': false
+  '@scarf/scarf': false
+  # Native transformer used by Vitest for NestJS decorator metadata.
+  '@swc/core': true
+  # Pulled in by the OTLP proto exporters. Its postinstall only prints a
+  # version-scheme warning and emits no build output, so blocking it is safe.
+  protobufjs: false
