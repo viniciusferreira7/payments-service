@@ -51,7 +51,7 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
 
     try {
       this.channel = await this.connection.createChannel();
-      this.logger.log('Created create on RabbitmQ successfully');
+      this.logger.log('Created on RabbitmQ successfully');
     } catch (error) {
       const errorDetails = getErrorDetails(error);
 

@@ -23,6 +23,9 @@ export const envSchema = z.object({
 
   OTEL_SERVICE_NAME: z.string().min(1),
   OTEL_EXPORTER_OTLP_ENDPOINT: z.url(),
+
+  PAYMENT_GATEWAY_URL: z.url(),
+  PAYMENT_GATEWAY_API_KEY: z.string().min(1),
 });
 
 export type Env = z.infer<typeof envSchema>;

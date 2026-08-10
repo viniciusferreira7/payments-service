@@ -13,6 +13,8 @@ const baseEnv = {
   RABBITMQ_EXCHANGE: 'payments',
   OTEL_SERVICE_NAME: 'payments-service',
   OTEL_EXPORTER_OTLP_ENDPOINT: 'http://localhost:4318',
+  PAYMENT_GATEWAY_URL: 'https://example.com',
+  PAYMENT_GATEWAY_API_KEY: 'GHGS*bkjg7fvfVlkjknl_kljdsfuihgiuas15dVy',
 };
 
 describe('envSchema', () => {
@@ -72,6 +74,18 @@ describe('envSchema', () => {
   it('rejects an unknown NODE_ENV', () => {
     expect(() =>
       envSchema.parse({ ...baseEnv, NODE_ENV: 'staging' })
+    ).toThrow();
+  });
+
+  it('rejects an unknown PAYMENT_GATEWAY_URL', () => {
+    expect(() =>
+      envSchema.parse({ ...baseEnv, PAYMENT_GATEWAY_URL: '' })
+    ).toThrow();
+  });
+
+  it('rejects an unknown PAYMENT_GATEWAY_API_KEY', () => {
+    expect(() =>
+      envSchema.parse({ ...baseEnv, PAYMENT_GATEWAY_API_KEY: '' })
     ).toThrow();
   });
 });
