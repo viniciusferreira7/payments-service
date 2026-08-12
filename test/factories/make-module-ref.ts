@@ -61,7 +61,9 @@ export async function startApp(
   app.enableCors();
   app.useGlobalPipes(
     new ValidationPipe({
+      transform: true,
       whitelist: true,
+      forbidNonWhitelisted: true,
     })
   );
 
