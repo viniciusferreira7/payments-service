@@ -11,9 +11,9 @@ import type { RabbitmqService } from '@/events/rabbitmq/rabbitmq.service';
  * every spec. This keeps the lifecycle hooks as no-ops and records what the
  * suite asked it to do, so assertions can be made without external infra.
  *
- * `getChannel` returns a truthy stub so consumers that guard on it (see
- * `PaymentQueueService`) still register their subscription — `deliver` then
- * drives a message through the registered callback:
+ * `getChannel` returns a truthy stub so consumers that guard on a live channel
+ * behave as they would against a connected broker. `subscribeToQueue` records
+ * the subscription and `deliver` drives a message through its callback:
  *
  * ```ts
  * await fake.deliver('payment_queue', makeOrder());

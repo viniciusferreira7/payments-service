@@ -27,13 +27,11 @@ function makeOrder(
 describe('PaymentQueueService', () => {
   let service: PaymentQueueService;
   let rabbitMqService: {
-    getChannel: ReturnType<typeof vi.fn>;
     subscribeToQueue: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(async () => {
     rabbitMqService = {
-      getChannel: vi.fn().mockReturnValue({}),
       subscribeToQueue: vi.fn().mockResolvedValue(undefined),
     };
 
@@ -48,8 +46,8 @@ describe('PaymentQueueService', () => {
     service = module.get<PaymentQueueService>(PaymentQueueService);
   });
 
-  it('binds the payments queue to the exchange on init', async () => {
-    await service.onModuleInit();
+  it('binds the payments queue to the exchange', async () => {
+    await service.consumePaymentOrders(vi.fn());
 
     expect(rabbitMqService.subscribeToQueue).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -60,24 +58,29 @@ describe('PaymentQueueService', () => {
     );
   });
 
-  it('skips the subscription when no channel is available', async () => {
-    rabbitMqService.getChannel.mockReturnValue(undefined);
+  it('routes a delivered message through the given callback', async () => {
+    const callback = vi.fn().mockResolvedValue(undefined);
+    await service.consumePaymentOrders(callback);
 
-    await service.onModuleInit();
+    const order = makeOrder();
+    const subscription = rabbitMqService.subscribeToQueue.mock.calls[0][0];
+    await subscription.callback(order);
 
-    expect(rabbitMqService.subscribeToQueue).not.toHaveBeenCalled();
+    expect(callback).toHaveBeenCalledWith(order);
   });
 
-  it('routes a delivered message through the handler', async () => {
+  it('routes a delivered message through the handler when wired to it', async () => {
     const handler = vi
       .spyOn(service, 'handlePaymentOrder')
       .mockResolvedValue(undefined);
 
-    await service.onModuleInit();
+    await service.consumePaymentOrders((message) =>
+      service.handlePaymentOrder(message as IncomingPaymentOrderMessage)
+    );
 
     const order = makeOrder();
-    const { callback } = rabbitMqService.subscribeToQueue.mock.calls[0][0];
-    await callback(order);
+    const subscription = rabbitMqService.subscribeToQueue.mock.calls[0][0];
+    await subscription.callback(order);
 
     expect(handler).toHaveBeenCalledWith(order);
   });
