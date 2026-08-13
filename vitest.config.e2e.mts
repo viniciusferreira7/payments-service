@@ -1,5 +1,5 @@
 import { mergeConfig } from 'vitest/config';
-import { baseConfig } from './vitest.shared';
+import { baseConfig } from './vitest.shared.mts';
 
 // End-to-end tests: *.e2e-spec.ts. Boot the full Nest application and drive it
 // over HTTP. Serial, with long timeouts.

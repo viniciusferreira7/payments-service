@@ -17,8 +17,8 @@ export const baseConfig = defineConfig({
     // Mirror tsconfig.json: the `@/*` -> `./src/*` alias and the `baseUrl`
     // that lets specs import `test/...` helpers.
     alias: {
-      '@': resolve(__dirname, 'src'),
-      test: resolve(__dirname, 'test'),
+      '@': resolve(import.meta.dirname, 'src'),
+      test: resolve(import.meta.dirname, 'test'),
     },
   },
   // Disable Vite's default Oxc transform so swc fully owns transformation

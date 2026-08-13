@@ -1,5 +1,5 @@
 import { mergeConfig } from 'vitest/config';
-import { baseConfig } from './vitest.shared';
+import { baseConfig } from './vitest.shared.mts';
 
 // Integration tests: *.int-spec.ts. Wire multiple modules through the DI
 // container (and real infra like Postgres/RabbitMQ as it lands), without going

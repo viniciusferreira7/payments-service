@@ -1,4 +1,4 @@
-import { baseConfig } from './vitest.shared';
+import { baseConfig } from './vitest.shared.mts';
 
 // Unit tests: *.spec.ts (Vitest's default include). Pure and isolated — no
 // NestApplication boot, no external infra. This is the default config, so

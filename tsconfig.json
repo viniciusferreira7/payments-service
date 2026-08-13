@@ -5,6 +5,10 @@
     "resolvePackageJsonExports": true,
     "esModuleInterop": true,
     "isolatedModules": true,
+    // Lets the .mts Vitest configs import each other by their real on-disk
+    // path, which is what Vite's native config loader resolves. Only valid
+    // under --noEmit, so tsconfig.build.json turns it back off.
+    "allowImportingTsExtensions": true,
     "declaration": true,
     "removeComments": true,
     "emitDecoratorMetadata": true,
