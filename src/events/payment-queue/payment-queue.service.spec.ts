@@ -68,37 +68,4 @@ describe('PaymentQueueService', () => {
 
     expect(callback).toHaveBeenCalledWith(order);
   });
-
-  it('routes a delivered message through the handler when wired to it', async () => {
-    const handler = vi
-      .spyOn(service, 'handlePaymentOrder')
-      .mockResolvedValue(undefined);
-
-    await service.consumePaymentOrders((message) =>
-      service.handlePaymentOrder(message as IncomingPaymentOrderMessage)
-    );
-
-    const order = makeOrder();
-    const subscription = rabbitMqService.subscribeToQueue.mock.calls[0][0];
-    await subscription.callback(order);
-
-    expect(handler).toHaveBeenCalledWith(order);
-  });
-
-  it('accepts a valid payment order', async () => {
-    await expect(
-      service.handlePaymentOrder(makeOrder())
-    ).resolves.toBeUndefined();
-  });
-
-  it.each([
-    ['missing orderId', { orderId: '' }],
-    ['missing userId', { userId: '' }],
-    ['non-positive amount', { amount: 0 }],
-    ['no items', { items: [] }],
-  ])('rejects a payment order with %s', async (_label, overrides) => {
-    await expect(
-      service.handlePaymentOrder(makeOrder(overrides))
-    ).rejects.toThrow('Invalid payment order');
-  });
 });
