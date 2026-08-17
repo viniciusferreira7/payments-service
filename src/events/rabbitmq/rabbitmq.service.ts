@@ -148,15 +148,11 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
 
       await this.channel.consume(queue.queue, async (msm) => {
         if (!msm) {
-          // Null delivery means the consumer was cancelled by the broker.
           this.logger.warn(`Consumer for queue ${queueName} was cancelled`);
           return;
         }
 
         try {
-          // `Buffer.toJSON()` yields `{ type: 'Buffer', data: [...] }`, not the
-          // payload — the producer publishes a UTF-8 JSON string, so decode it
-          // as one.
           const payload = JSON.parse(msm.content.toString('utf-8'));
 
           this.logger.log(`Message received from queue: ${queueName}`);
