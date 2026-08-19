@@ -9,6 +9,7 @@
     // path, which is what Vite's native config loader resolves. Only valid
     // under --noEmit, so tsconfig.build.json turns it back off.
     "allowImportingTsExtensions": true,
+    "noEmit": true,
     "declaration": true,
     "removeComments": true,
     "emitDecoratorMetadata": true,

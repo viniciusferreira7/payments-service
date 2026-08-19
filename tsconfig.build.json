@@ -2,8 +2,10 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     // This config emits, which is incompatible with the base config's
-    // allowImportingTsExtensions. The .mts files that need it are excluded.
-    "allowImportingTsExtensions": false
+    // allowImportingTsExtensions/noEmit pair. The .mts files that need
+    // allowImportingTsExtensions are excluded below.
+    "allowImportingTsExtensions": false,
+    "noEmit": false
   },
   "exclude": [
     "node_modules",
