@@ -38,7 +38,7 @@ describe('PaymentConsumerService', () => {
    * through the real registration path.
    */
   async function getRegisteredHandler(): Promise<PaymentOrderHandler> {
-    await service.onModuleInit();
+    await service.onApplicationBootstrap();
 
     return paymentQueueService.consumePaymentOrders.mock
       .calls[0][0] as PaymentOrderHandler;
@@ -73,9 +73,9 @@ describe('PaymentConsumerService', () => {
     expect(service).toBeDefined();
   });
 
-  describe('onModuleInit', () => {
+  describe('onApplicationBootstrap', () => {
     it('registers a payment order handler on the queue', async () => {
-      await service.onModuleInit();
+      await service.onApplicationBootstrap();
 
       expect(paymentQueueService.consumePaymentOrders).toHaveBeenCalledTimes(1);
       expect(paymentQueueService.consumePaymentOrders).toHaveBeenCalledWith(
@@ -92,11 +92,17 @@ describe('PaymentConsumerService', () => {
       expect(log).toHaveBeenCalledWith('Payment order received and validated');
     });
 
-    it('swallows a queue failure so the module still boots', async () => {
+    it('subscribes on bootstrap, not on init', () => {
+      // `RabbitmqService` opens its channel in `onModuleInit`, and Nest runs
+      // those hooks in parallel. Subscribing on init raced that connection.
+      expect(service).not.toHaveProperty('onModuleInit');
+    });
+
+    it('logs a queue failure without failing the boot', async () => {
       const failure = new Error('broker unreachable');
       paymentQueueService.consumePaymentOrders.mockRejectedValue(failure);
 
-      await expect(service.onModuleInit()).resolves.toBeUndefined();
+      await expect(service.onApplicationBootstrap()).resolves.toBeUndefined();
       expect(error).toHaveBeenCalledWith(
         `Failed to start consuming payment orders: ${failure.message}`,
         failure.stack
@@ -106,7 +112,7 @@ describe('PaymentConsumerService', () => {
     it('logs the raw value when the queue rejects with a non-Error', async () => {
       paymentQueueService.consumePaymentOrders.mockRejectedValue('boom');
 
-      await service.onModuleInit();
+      await service.onApplicationBootstrap();
 
       expect(error).toHaveBeenCalledWith(
         'Failed to start consuming payment orders: boom',

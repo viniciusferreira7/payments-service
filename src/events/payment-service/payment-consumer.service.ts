@@ -1,20 +1,24 @@
-import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  type OnApplicationBootstrap,
+} from '@nestjs/common';
 import { getErrorDetails } from '@/utils/error.util';
 import type { PaymentOrderMessage } from '../interfaces/payments-queue.interface';
 import { PaymentQueueService } from '../payment-queue/payment-queue.service';
 
 @Injectable()
-export class PaymentConsumerService implements OnModuleInit {
+export class PaymentConsumerService implements OnApplicationBootstrap {
   private readonly logger = new Logger(PaymentConsumerService.name);
 
   constructor(private readonly paymentQueueService: PaymentQueueService) {}
 
-  async onModuleInit() {
+  async onApplicationBootstrap() {
     this.logger.log('Starting Payment Consumer Service');
     await this.startConsuming();
   }
 
-  private async startConsuming() {
+  private async startConsuming(): Promise<void> {
     this.logger.log('Starting to consume payment orders from queue');
     try {
       await this.paymentQueueService.consumePaymentOrders(
