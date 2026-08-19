@@ -1,7 +1,7 @@
 import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { getErrorDetails } from '@/utils/error.util';
 import type { PaymentOrderMessage } from '../interfaces/payments-queue.interface';
-import type { PaymentQueueService } from '../payment-queue/payment-queue.service';
+import { PaymentQueueService } from '../payment-queue/payment-queue.service';
 
 @Injectable()
 export class PaymentConsumerService implements OnModuleInit {
@@ -42,7 +42,7 @@ export class PaymentConsumerService implements OnModuleInit {
 
       const isValidMessage = this.validateMessage(message);
 
-      if (isValidMessage) {
+      if (!isValidMessage) {
         this.logger.error('Invalid payment message received');
 
         return;
