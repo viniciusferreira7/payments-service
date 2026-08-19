@@ -145,6 +145,12 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
     callback,
   }: SubscribeToQueue): Promise<void> {
     try {
+      if (!this.channel) {
+        // `connect()` logs and returns on failure, so a missing channel is the
+        // only signal left that the broker was not reachable at startup.
+        throw new Error('RabbitMQ channel not available');
+      }
+
       await this.channel.assertExchange(exchange, 'topic', { durable: true });
 
       const queue = await this.channel.assertQueue(queueName, {
@@ -198,6 +204,10 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
         `Error subscribing to queue ${queueName}: ${errorDetails.message}`,
         errorDetails.stack
       );
+
+      // Rethrown so callers can retry: swallowing here reported a healthy
+      // consumer while nothing was subscribed.
+      throw error;
     }
   }
 }

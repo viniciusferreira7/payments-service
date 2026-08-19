@@ -58,6 +58,15 @@ describe('PaymentQueueService', () => {
     );
   });
 
+  it('propagates a subscription failure so the caller can retry', async () => {
+    const failure = new Error('RabbitMQ channel not available');
+    rabbitMqService.subscribeToQueue.mockRejectedValue(failure);
+
+    await expect(service.consumePaymentOrders(vi.fn())).rejects.toThrow(
+      failure
+    );
+  });
+
   it('routes a delivered message through the given callback', async () => {
     const callback = vi.fn().mockResolvedValue(undefined);
     await service.consumePaymentOrders(callback);

@@ -107,4 +107,45 @@ describe('RabbitmqService', () => {
       expect(service.getChannel()).toBeDefined();
     });
   });
+
+  describe('subscribeToQueue', () => {
+    const subscription = {
+      queueName: 'payment_queue',
+      exchange: 'payments',
+      routingKey: 'payment.order',
+      callback: vi.fn(),
+    };
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('rejects when the broker was never reached', async () => {
+      // `connect()` logs and returns on failure, leaving `channel` undefined.
+      vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+      await expect(service.subscribeToQueue(subscription)).rejects.toThrow(
+        'RabbitMQ channel not available'
+      );
+    });
+
+    it('logs and rethrows a broker failure', async () => {
+      const error = vi
+        .spyOn(Logger.prototype, 'error')
+        .mockImplementation(() => undefined);
+      const failure = new Error('channel closed');
+
+      Reflect.set(service, 'channel', {
+        assertExchange: vi.fn().mockRejectedValue(failure),
+      });
+
+      await expect(service.subscribeToQueue(subscription)).rejects.toThrow(
+        failure
+      );
+      expect(error).toHaveBeenCalledWith(
+        `Error subscribing to queue ${subscription.queueName}: ${failure.message}`,
+        failure.stack
+      );
+    });
+  });
 });
