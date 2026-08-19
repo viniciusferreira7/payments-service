@@ -7,6 +7,7 @@ import {
 import * as amqp from 'amqplib';
 import { EnvService } from '@/env/env.service';
 import { getErrorDetails } from '@/utils/error.util';
+import { waitForConnection } from '@/utils/wait-for-connection';
 import type { PublicMessageParams } from '../interfaces/public-message.interface';
 import type { SubscribeToQueue } from '../interfaces/subscribe-to-queue.interface';
 
@@ -30,15 +31,23 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
     await this.disconnect();
   }
   async onModuleInit() {
-    await this.connect();
+    const isConnected = await waitForConnection({
+      callback: () => this.connect(),
+    });
+
+    if (!isConnected) {
+      this.logger.error('Gave up connecting to RabbitMQ: broker unreachable');
+    }
   }
 
-  private async connect() {
+  private async connect(): Promise<boolean> {
     const rabbitMqUrl = this.envService.get('RABBITMQ_URL');
 
     try {
-      this.connection = await amqp.connect(rabbitMqUrl);
-      this.logger.log('Connected on RabbitmQ successfully');
+      if (!this.connection) {
+        this.connection = await amqp.connect(rabbitMqUrl);
+        this.logger.log('Connected on RabbitmQ successfully');
+      }
     } catch (error) {
       const errorDetails = getErrorDetails(error);
       this.logger.error(
@@ -46,12 +55,14 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
         errorDetails.stack
       );
 
-      return;
+      return false;
     }
 
     try {
       this.channel = await this.connection.createChannel();
       this.logger.log('Created on RabbitmQ successfully');
+
+      return true;
     } catch (error) {
       const errorDetails = getErrorDetails(error);
 
@@ -59,6 +70,8 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
         `Failed to create channel on RabbitMQ: ${errorDetails.message}`,
         errorDetails.stack
       );
+
+      return false;
     }
   }
 
