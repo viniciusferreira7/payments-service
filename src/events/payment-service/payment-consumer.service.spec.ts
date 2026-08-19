@@ -2,7 +2,7 @@ import { Logger } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import type { PaymentOrderMessage } from '../interfaces/payments-queue.interface';
 import { PaymentQueueService } from '../payment-queue/payment-queue.service';
-import { PaymentConsumerService } from './payment-consumer-service.service';
+import { PaymentConsumerService } from './payment-consumer.service';
 
 type PaymentOrderHandler = (message: PaymentOrderMessage) => Promise<void>;
 

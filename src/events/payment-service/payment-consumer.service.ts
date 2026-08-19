@@ -48,6 +48,8 @@ export class PaymentConsumerService implements OnModuleInit {
         return;
       }
 
+      //TODO: Implement payment service
+
       this.logger.log('Payment order received and validated');
     } catch (error) {
       const errorDetails = getErrorDetails(error);

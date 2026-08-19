@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { PaymentQueueService } from './payment-queue/payment-queue.service';
-import { PaymentConsumerService } from './payment-service/payment-consumer-service.service';
+import { PaymentConsumerService } from './payment-service/payment-consumer.service';
 import { RabbitmqService } from './rabbitmq/rabbitmq.service';
 
 @Module({
