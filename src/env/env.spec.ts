@@ -18,11 +18,12 @@ const baseEnv = {
 };
 
 describe('envSchema', () => {
-  it('applies the NODE_ENV and PORT defaults', () => {
+  it('applies the NODE_ENV, PORT and LOG_LEVEL defaults', () => {
     const env = envSchema.parse(baseEnv);
 
     expect(env.NODE_ENV).toBe('dev');
     expect(env.PORT).toBe(3335);
+    expect(env.LOG_LEVEL).toBe('info');
   });
 
   it('defaults the payment order routing key', () => {

@@ -31,8 +31,15 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
     await this.disconnect();
   }
   async onModuleInit() {
+    const maxAttempt = 10;
     const isConnected = await waitForConnection({
-      callback: () => this.connect(),
+      maxAttempt,
+      callback: (attempt) => {
+        this.logger.debug(
+          `Waiting for RabbitMQ connection... (attempt ${attempt}/${maxAttempt})`
+        );
+        return this.connect();
+      },
     });
 
     if (!isConnected) {
