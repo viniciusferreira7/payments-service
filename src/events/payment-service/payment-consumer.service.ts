@@ -49,7 +49,7 @@ export class PaymentConsumerService implements OnApplicationBootstrap {
       if (!isValidMessage) {
         this.logger.error('Invalid payment message received');
 
-        return;
+        throw new Error('Invalid payment message received');
       }
 
       //TODO: Implement payment service
