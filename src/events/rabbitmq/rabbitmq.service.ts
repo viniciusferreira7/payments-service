@@ -153,18 +153,35 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
   }: SubscribeToQueue): Promise<void> {
     try {
       if (!this.channel) {
-        // `connect()` logs and returns on failure, so a missing channel is the
-        // only signal left that the broker was not reachable at startup.
         throw new Error('RabbitMQ channel not available');
       }
 
       await this.channel.assertExchange(exchange, 'topic', { durable: true });
+
+      const dlxExchangeName = `${exchange}.dlx`;
+      await this.channel.assertExchange(dlxExchangeName, 'topic', {
+        durable: true,
+      });
+
+      const dlqName = `${queueName}.dlq`;
+      await this.channel.assertQueue(dlqName, {
+        durable: true,
+        arguments: {
+          'x-message-tll': 604_800_000, // 7 days
+        },
+      });
+
+      const routingKeyDlq = `${routingKey}.dlq`;
+
+      await this.channel.bindQueue(dlqName, dlxExchangeName, routingKeyDlq);
 
       const queue = await this.channel.assertQueue(queueName, {
         durable: true,
         arguments: {
           'x-message-ttl': 86_400_000, // 24 hours
           'x-max-length': 10_000, // 10 thousand seconds
+          'x-dead-letter-exchange': dlxExchangeName,
+          'x-dead-letter-routing-key': routingKeyDlq,
         },
       });
 
@@ -197,7 +214,8 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
             errorDetails.stack
           );
 
-          this.channel.nack(msm, false, false); //TODO: Add into a DLQ (Dead Letter Queue)
+          this.channel.nack(msm, false, false);
+          this.logger.warn(`This message sent to DLQ: ${dlqName}`);
         }
       });
 
@@ -212,8 +230,6 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
         errorDetails.stack
       );
 
-      // Rethrown so callers can retry: swallowing here reported a healthy
-      // consumer while nothing was subscribed.
       throw error;
     }
   }
