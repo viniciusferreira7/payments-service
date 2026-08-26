@@ -17,6 +17,7 @@ function makeOrder(
     orderId: 'order-1',
     userId: 'user-1',
     amount: 100,
+    discount: 0,
     items: [{ productId: 'product-1', quantity: 1, price: 100 }],
     paymentMethod: 'credit_card',
     createdAt: new Date(),

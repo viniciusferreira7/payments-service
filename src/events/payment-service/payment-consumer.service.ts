@@ -93,6 +93,18 @@ export class PaymentConsumerService implements OnApplicationBootstrap {
       return false;
     }
 
+    const itemsTotal = message.items.reduce(
+      (acc, item) => acc + item.price * item.quantity,
+      0
+    );
+
+    const expectedAmount = itemsTotal - message.discount;
+
+    if (message.amount !== expectedAmount) {
+      this.logger.error('Payment amount does not match order total');
+      return false;
+    }
+
     return true;
   }
 }

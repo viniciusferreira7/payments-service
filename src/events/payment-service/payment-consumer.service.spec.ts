@@ -16,6 +16,7 @@ function makeOrder(
     orderId: 'order-1',
     userId: 'user-1',
     amount: 100,
+    discount: 0,
     items: [{ productId: 'product-1', quantity: 1, price: 100 }],
     paymentMethod: 'credit_card',
     createdAt: new Date(),
@@ -222,4 +223,105 @@ describe('PaymentConsumerService', () => {
     });
   });
 
+  describe('validating the amount against the order total', () => {
+    it('accepts an amount equal to the items total', async () => {
+      const handler = await getRegisteredHandler();
+
+      await expect(
+        handler(
+          makeOrder({
+            amount: 130,
+            discount: 0,
+            items: [
+              { productId: 'product-1', quantity: 2, price: 50 },
+              { productId: 'product-2', quantity: 1, price: 30 },
+            ],
+          })
+        )
+      ).resolves.toBeUndefined();
+
+      expect(log).toHaveBeenCalledWith('Payment order received and validated');
+    });
+
+    it('accepts an amount with the discount subtracted from the items total', async () => {
+      const handler = await getRegisteredHandler();
+
+      await expect(
+        handler(
+          makeOrder({
+            amount: 80,
+            discount: 20,
+            items: [{ productId: 'product-1', quantity: 1, price: 100 }],
+          })
+        )
+      ).resolves.toBeUndefined();
+
+      expect(log).toHaveBeenCalledWith('Payment order received and validated');
+    });
+
+    it.each([
+      ['the amount is below the items total', { amount: 90, discount: 0 }],
+      ['the amount is above the items total', { amount: 110, discount: 0 }],
+      [
+        'the discount was announced but never applied to the amount',
+        { amount: 100, discount: 20 },
+      ],
+      [
+        'the discount was applied twice to the amount',
+        { amount: 60, discount: 20 },
+      ],
+      [
+        'the discount pushes the total below the charged amount',
+        { amount: 100, discount: 100 },
+      ],
+    ])('rejects the message when %s', async (_case, overrides) => {
+      const handler = await getRegisteredHandler();
+
+      await expect(
+        handler(
+          makeOrder({
+            ...overrides,
+            items: [{ productId: 'product-1', quantity: 1, price: 100 }],
+          })
+        )
+      ).rejects.toThrow('Invalid payment message received');
+
+      expect(error).toHaveBeenCalledWith(
+        'Payment amount does not match order total'
+      );
+    });
+
+    it('rejects the message when a producer omits the discount', async () => {
+      const handler = await getRegisteredHandler();
+
+      // Messages arrive as untyped JSON off the queue, so a producer on an
+      // older contract can leave `discount` out entirely. The subtraction then
+      // yields NaN, which must fail the check rather than pass it.
+      const order = makeOrder();
+      Reflect.deleteProperty(order, 'discount');
+
+      await expect(handler(order)).rejects.toThrow(
+        'Invalid payment message received'
+      );
+
+      expect(error).toHaveBeenCalledWith(
+        'Payment amount does not match order total'
+      );
+    });
+
+    it('checks the items are present before summing them', async () => {
+      const handler = await getRegisteredHandler();
+
+      // Reducing an empty list would total 0 and report a mismatch, masking
+      // the real problem: the message carries no items at all.
+      await expect(handler(makeOrder({ items: [] }))).rejects.toThrow(
+        'Invalid payment message received'
+      );
+
+      expect(error).toHaveBeenCalledWith('No items in payment message');
+      expect(error).not.toHaveBeenCalledWith(
+        'Payment amount does not match order total'
+      );
+    });
+  });
 });
