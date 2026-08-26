@@ -385,4 +385,86 @@ describe('RabbitmqService', () => {
       expect(channel.nack).not.toHaveBeenCalled();
     });
   });
+
+  describe('publicMessage', () => {
+    const params = {
+      exchange: 'payments',
+      routingKey: 'payment.order',
+      message: { orderId: 'order-1', amount: 100 },
+    };
+
+    let channel: ReturnType<typeof makeChannel>;
+    let warn: ReturnType<typeof vi.spyOn>;
+    let error: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      vi.spyOn(Logger.prototype, 'log').mockImplementation(silence);
+      vi.spyOn(Logger.prototype, 'debug').mockImplementation(silence);
+      warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(silence);
+      error = vi.spyOn(Logger.prototype, 'error').mockImplementation(silence);
+
+      channel = makeChannel();
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('skips the publish when the broker was never reached', async () => {
+      await expect(service.publicMessage(params)).resolves.toBeUndefined();
+
+      expect(warn).toHaveBeenCalledWith(
+        'RabbiMq channel not available, skipping message publish'
+      );
+    });
+
+    it('publishes the message as a durable JSON payload', async () => {
+      Reflect.set(service, 'channel', channel);
+
+      await service.publicMessage(params);
+
+      expect(channel.assertExchange).toHaveBeenCalledWith('payments', 'topic', {
+        durable: true,
+      });
+
+      const [exchange, routingKey, content, options] =
+        channel.publish.mock.calls[0];
+
+      expect(exchange).toBe('payments');
+      expect(routingKey).toBe('payment.order');
+      expect(JSON.parse(content.toString('utf-8'))).toEqual(params.message);
+      expect(options).toMatchObject({
+        persistent: true,
+        contentType: 'application/json',
+      });
+    });
+
+    it('logs a full write buffer instead of throwing at the caller', async () => {
+      // `publish` returning false means the write buffer is full; the service
+      // must not surface that to the caller.
+      channel.publish.mockReturnValue(false);
+      Reflect.set(service, 'channel', channel);
+
+      await expect(service.publicMessage(params)).resolves.toBeUndefined();
+
+      expect(error).toHaveBeenCalledWith(
+        'Error publishing message to RabbitMQ: Failed to publish message to RabbiMQ',
+        expect.any(String)
+      );
+    });
+
+    it('logs a broker failure instead of throwing at the caller', async () => {
+      const failure = new Error('channel closed');
+      channel.assertExchange.mockRejectedValue(failure);
+      Reflect.set(service, 'channel', channel);
+
+      await expect(service.publicMessage(params)).resolves.toBeUndefined();
+
+      expect(error).toHaveBeenCalledWith(
+        `Error publishing message to RabbitMQ: ${failure.message}`,
+        failure.stack
+      );
+      expect(channel.publish).not.toHaveBeenCalled();
+    });
+  });
 });
