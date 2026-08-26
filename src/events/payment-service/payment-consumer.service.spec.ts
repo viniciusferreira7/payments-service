@@ -163,7 +163,9 @@ describe('PaymentConsumerService', () => {
       async (_case, overrides: Partial<PaymentOrderMessage>, reason) => {
         const handler = await getRegisteredHandler();
 
-        await handler(makeOrder(overrides));
+        await expect(handler(makeOrder(overrides))).rejects.toThrow(
+          'Invalid payment message received'
+        );
 
         expect(error).toHaveBeenCalledWith(reason);
         expect(error).toHaveBeenCalledWith('Invalid payment message received');
@@ -176,7 +178,9 @@ describe('PaymentConsumerService', () => {
     it('stops at the first validation failure', async () => {
       const handler = await getRegisteredHandler();
 
-      await handler(makeOrder({ orderId: '', userId: '' }));
+      await expect(
+        handler(makeOrder({ orderId: '', userId: '' }))
+      ).rejects.toThrow('Invalid payment message received');
 
       expect(error).toHaveBeenCalledWith('Missing orderId in payment message');
       expect(error).not.toHaveBeenCalledWith(
@@ -184,12 +188,21 @@ describe('PaymentConsumerService', () => {
       );
     });
 
-    it('does not reject on an invalid message, so it is not requeued forever', async () => {
+    it('rejects an invalid message so the broker routes it to the DLQ', async () => {
       const handler = await getRegisteredHandler();
+      const order = makeOrder({ orderId: '' });
 
-      await expect(
-        handler(makeOrder({ orderId: '' }))
-      ).resolves.toBeUndefined();
+      // `RabbitmqService.subscribeToQueue` nacks without requeue when the
+      // handler rejects, which is what moves the message onto the DLQ.
+      // Resolving here would ack a message that was never processed.
+      await expect(handler(order)).rejects.toThrow(
+        'Invalid payment message received'
+      );
+
+      expect(error).toHaveBeenCalledWith(
+        `Failed to process payment for order: ${order.orderId}, error message:Invalid payment message received`,
+        expect.any(String)
+      );
     });
 
     it('logs and rethrows an unexpected processing failure', async () => {
@@ -208,4 +221,5 @@ describe('PaymentConsumerService', () => {
       );
     });
   });
+
 });
