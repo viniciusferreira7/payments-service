@@ -7,6 +7,34 @@ import { RabbitmqService } from './rabbitmq.service';
 const { amqpConnect } = vi.hoisted(() => ({ amqpConnect: vi.fn() }));
 vi.mock('amqplib', () => ({ connect: amqpConnect }));
 
+/** Keeps the Nest logger quiet while the spies still record every call. */
+const silence = () => undefined;
+
+/** Minimal `amqp.Channel` stub: enough surface for the topology + consume. */
+function makeChannel() {
+  return {
+    assertExchange: vi.fn().mockResolvedValue(undefined),
+    assertQueue: vi.fn(async (queue: string) => ({ queue })),
+    bindQueue: vi.fn().mockResolvedValue(undefined),
+    prefetch: vi.fn().mockResolvedValue(undefined),
+    consume: vi.fn().mockResolvedValue({ consumerTag: 'consumer-1' }),
+    publish: vi.fn().mockReturnValue(true),
+    ack: vi.fn(),
+    nack: vi.fn(),
+    close: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+/** A queue callback typed as `SubscribeToQueue` declares it. */
+function makeCallback() {
+  return vi.fn<(message: unknown) => Promise<void>>();
+}
+
+/** An AMQP delivery carrying `payload` as its JSON body. */
+function makeMessage(payload: unknown) {
+  return { content: Buffer.from(JSON.stringify(payload)) };
+}
+
 describe('RabbitmqService', () => {
   let service: RabbitmqService;
 
@@ -146,6 +174,215 @@ describe('RabbitmqService', () => {
         `Error subscribing to queue ${subscription.queueName}: ${failure.message}`,
         failure.stack
       );
+    });
+  });
+
+  describe('subscribeToQueue topology', () => {
+    const subscription = {
+      queueName: 'payment_queue',
+      exchange: 'payments',
+      routingKey: 'payment.order',
+    };
+
+    let channel: ReturnType<typeof makeChannel>;
+    let callback: ReturnType<typeof makeCallback>;
+
+    beforeEach(() => {
+      vi.spyOn(Logger.prototype, 'log').mockImplementation(silence);
+      vi.spyOn(Logger.prototype, 'debug').mockImplementation(silence);
+      vi.spyOn(Logger.prototype, 'warn').mockImplementation(silence);
+      vi.spyOn(Logger.prototype, 'error').mockImplementation(silence);
+
+      channel = makeChannel();
+      callback = makeCallback();
+      callback.mockResolvedValue(undefined);
+      Reflect.set(service, 'channel', channel);
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('declares the main exchange as a durable topic', async () => {
+      await service.subscribeToQueue({ ...subscription, callback });
+
+      expect(channel.assertExchange).toHaveBeenCalledWith('payments', 'topic', {
+        durable: true,
+      });
+    });
+
+    it('declares a dead letter exchange alongside the main one', async () => {
+      await service.subscribeToQueue({ ...subscription, callback });
+
+      expect(channel.assertExchange).toHaveBeenCalledWith(
+        'payments.dlx',
+        'topic',
+        { durable: true }
+      );
+    });
+
+    it('declares the dead letter queue and binds it to the DLX', async () => {
+      await service.subscribeToQueue({ ...subscription, callback });
+
+      expect(channel.assertQueue).toHaveBeenCalledWith('payment_queue.dlq', {
+        durable: true,
+        arguments: expect.objectContaining({ 'x-message-tll': 604_800_000 }),
+      });
+      expect(channel.bindQueue).toHaveBeenCalledWith(
+        'payment_queue.dlq',
+        'payments.dlx',
+        'payment.order.dlq'
+      );
+    });
+
+    it('points the main queue at the dead letter exchange', async () => {
+      await service.subscribeToQueue({ ...subscription, callback });
+
+      expect(channel.assertQueue).toHaveBeenCalledWith('payment_queue', {
+        durable: true,
+        arguments: {
+          'x-message-ttl': 86_400_000,
+          'x-max-length': 10_000,
+          'x-dead-letter-exchange': 'payments.dlx',
+          'x-dead-letter-routing-key': 'payment.order.dlq',
+        },
+      });
+    });
+
+    it('declares the dead letter queue before the queue that routes to it', async () => {
+      await service.subscribeToQueue({ ...subscription, callback });
+
+      const declared = channel.assertQueue.mock.calls.map(([name]) => name);
+
+      // Publishing to a missing DLX/DLQ silently drops the message, so the
+      // dead letter side has to exist before the main queue can name it.
+      expect(declared).toEqual(['payment_queue.dlq', 'payment_queue']);
+    });
+
+    it('binds the main queue to its routing key and consumes one at a time', async () => {
+      await service.subscribeToQueue({ ...subscription, callback });
+
+      expect(channel.bindQueue).toHaveBeenCalledWith(
+        'payment_queue',
+        'payments',
+        'payment.order'
+      );
+      expect(channel.prefetch).toHaveBeenCalledWith(1);
+      expect(channel.consume).toHaveBeenCalledWith(
+        'payment_queue',
+        expect.any(Function)
+      );
+    });
+  });
+
+  describe('consuming a delivered message', () => {
+    const subscription = {
+      queueName: 'payment_queue',
+      exchange: 'payments',
+      routingKey: 'payment.order',
+    };
+
+    let channel: ReturnType<typeof makeChannel>;
+    let callback: ReturnType<typeof makeCallback>;
+    let warn: ReturnType<typeof vi.spyOn>;
+    let error: ReturnType<typeof vi.spyOn>;
+
+    /** Returns the consumer the service handed to `channel.consume`. */
+    async function getConsumer() {
+      await service.subscribeToQueue({ ...subscription, callback });
+
+      return channel.consume.mock.calls[0][1] as (
+        message: { content: Buffer } | null
+      ) => Promise<void>;
+    }
+
+    beforeEach(() => {
+      vi.spyOn(Logger.prototype, 'log').mockImplementation(silence);
+      vi.spyOn(Logger.prototype, 'debug').mockImplementation(silence);
+      warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(silence);
+      error = vi.spyOn(Logger.prototype, 'error').mockImplementation(silence);
+
+      channel = makeChannel();
+      callback = makeCallback();
+      callback.mockResolvedValue(undefined);
+      Reflect.set(service, 'channel', channel);
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('parses the payload and hands it to the callback', async () => {
+      const consumer = await getConsumer();
+      const payload = { orderId: 'order-1', amount: 100 };
+
+      await consumer(makeMessage(payload));
+
+      expect(callback).toHaveBeenCalledWith(payload);
+    });
+
+    it('acks a message the callback processed', async () => {
+      const consumer = await getConsumer();
+      const message = makeMessage({ orderId: 'order-1' });
+
+      await consumer(message);
+
+      expect(channel.ack).toHaveBeenCalledWith(message);
+      expect(channel.nack).not.toHaveBeenCalled();
+    });
+
+    it('sends a message to the DLQ when the callback rejects', async () => {
+      const failure = new Error('Invalid payment message received');
+      callback.mockRejectedValue(failure);
+
+      const consumer = await getConsumer();
+      const message = makeMessage({ orderId: 'order-1' });
+
+      await consumer(message);
+
+      // `requeue: false` is what routes the message to the DLQ; requeueing it
+      // would loop the same poison message forever.
+      expect(channel.nack).toHaveBeenCalledWith(message, false, false);
+      expect(channel.ack).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalledWith(
+        `Error to processing message: ${failure.message}`,
+        failure.stack
+      );
+      expect(warn).toHaveBeenCalledWith(
+        'This message sent to DLQ: payment_queue.dlq'
+      );
+    });
+
+    it('sends a malformed payload to the DLQ without calling the callback', async () => {
+      const consumer = await getConsumer();
+      const message = { content: Buffer.from('not json') };
+
+      await consumer(message);
+
+      expect(callback).not.toHaveBeenCalled();
+      expect(channel.nack).toHaveBeenCalledWith(message, false, false);
+    });
+
+    it('does not fail the consumer when the message is nacked', async () => {
+      callback.mockRejectedValue(new Error('boom'));
+
+      const consumer = await getConsumer();
+
+      // The consumer swallows the failure so the channel keeps delivering.
+      await expect(consumer(makeMessage({}))).resolves.toBeUndefined();
+    });
+
+    it('warns and stops when the broker cancels the consumer', async () => {
+      const consumer = await getConsumer();
+
+      await consumer(null);
+
+      expect(warn).toHaveBeenCalledWith(
+        'Consumer for queue payment_queue was cancelled'
+      );
+      expect(callback).not.toHaveBeenCalled();
+      expect(channel.ack).not.toHaveBeenCalled();
+      expect(channel.nack).not.toHaveBeenCalled();
     });
   });
 });
