@@ -467,4 +467,63 @@ describe('RabbitmqService', () => {
       expect(channel.publish).not.toHaveBeenCalled();
     });
   });
+
+  describe('onModuleDestroy', () => {
+    let log: ReturnType<typeof vi.spyOn>;
+    let error: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      log = vi.spyOn(Logger.prototype, 'log').mockImplementation(silence);
+      error = vi.spyOn(Logger.prototype, 'error').mockImplementation(silence);
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('closes the channel before the connection', async () => {
+      const order: string[] = [];
+      const channel = {
+        close: vi.fn(async () => {
+          order.push('channel');
+        }),
+      };
+      const connection = {
+        close: vi.fn(async () => {
+          order.push('connection');
+        }),
+      };
+
+      Reflect.set(service, 'channel', channel);
+      Reflect.set(service, 'connection', connection);
+
+      await service.onModuleDestroy();
+
+      expect(order).toEqual(['channel', 'connection']);
+      expect(log).toHaveBeenCalledWith('RabbitMQ channel service was closed');
+      expect(log).toHaveBeenCalledWith('RabbitMQ service was disconnected');
+    });
+
+    it('is a no-op when the broker was never reached', async () => {
+      // Shutting down after a failed boot must not throw on an absent channel.
+      await expect(service.onModuleDestroy()).resolves.toBeUndefined();
+
+      expect(error).not.toHaveBeenCalled();
+    });
+
+    it('logs a failure to close instead of failing the shutdown', async () => {
+      const failure = new Error('socket already gone');
+
+      Reflect.set(service, 'channel', {
+        close: vi.fn().mockRejectedValue(failure),
+      });
+
+      await expect(service.onModuleDestroy()).resolves.toBeUndefined();
+
+      expect(error).toHaveBeenCalledWith(
+        `Failed to disconnect from RabbitMQ: ${failure.message}`,
+        failure.stack
+      );
+    });
+  });
 });
