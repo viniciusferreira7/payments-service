@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type { Channel } from 'amqplib';
+import type { Channel, GetMessage } from 'amqplib';
 import { EnvService } from '@/env/env.service';
 import { getErrorDetails } from '@/utils/error.util';
 import type { PaymentOrderMessage } from '../interfaces/payments-queue.interface';
@@ -36,6 +36,12 @@ export class DlqService {
     return channel;
   }
 
+  private requeue(channel: Channel, messages: GetMessage[]): void {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      channel.nack(messages[i], false, true);
+    }
+  }
+
   public async getStats(): Promise<DLQStats> {
     const channel = await this.getChannel();
 
@@ -52,66 +58,71 @@ export class DlqService {
     const channel = await this.getChannel();
 
     const messages: DLQMessage[] = [];
+    const inspected: GetMessage[] = [];
 
     await channel.checkQueue(this.DLQ_NAME);
 
-    for (let i = 0; i < limit; i++) {
-      const message = await channel.get(this.DLQ_NAME, {
-        noAck: false,
-      });
+    try {
+      for (let i = 0; i < limit; i++) {
+        const message = await channel.get(this.DLQ_NAME, {
+          noAck: false,
+        });
 
-      if (!message) break;
+        if (!message) break;
 
-      try {
-        const content = JSON.parse(
-          message.content.toString()
-        ) as PaymentOrderMessage;
+        inspected.push(message);
 
-        const xDeath = message.properties.headers?.['x-death'] as
-          | Array<
-              Omit<DLQMessageDeathInfo, 'routingKeys' | 'time'> & {
-                'routing-key': string;
-                time: { getTime: () => number };
+        try {
+          const content = JSON.parse(
+            message.content.toString()
+          ) as PaymentOrderMessage;
+
+          const xDeath = message.properties.headers?.['x-death'] as
+            | Array<
+                Omit<DLQMessageDeathInfo, 'routingKeys' | 'time'> & {
+                  'routing-key': string;
+                  time: { getTime: () => number };
+                }
+              >
+            | undefined;
+
+          const deathInfo = xDeath?.[0]
+            ? {
+                reason: xDeath[0].reason,
+                queue: xDeath[0].queue,
+                time: new Date(xDeath[0].time?.getTime?.() || Date.now()),
+                count: xDeath[0].count,
+                exchange: xDeath[0].exchange,
+                routingKeys: xDeath[0]['routing-keys'],
               }
-            >
-          | undefined;
-
-        const deathInfo = xDeath?.[0]
-          ? {
-              reason: xDeath[0].reason,
-              queue: xDeath[0].queue,
-              time: new Date(xDeath[0].time?.getTime?.() || Date.now()),
-              count: xDeath[0].count,
-              exchange: xDeath[0].exchange,
-              routingKeys: xDeath[0]['routing-keys'],
-            }
-          : undefined;
-
-        const headers =
-          message.properties.headers &&
-          typeof message.properties.headers === 'object'
-            ? (message.properties.headers as Record<string, unknown>)
             : undefined;
 
-        messages.push({
-          content,
-          properties: {
-            messageId: message.properties.messageId as string | undefined,
-            timestamp: message.properties.timestamp as number | undefined,
-            headers,
-          },
-          deathInfo,
-        });
-        channel.nack(message, false, true);
-      } catch (error) {
-        const errorDetails = getErrorDetails(error);
+          const headers =
+            message.properties.headers &&
+            typeof message.properties.headers === 'object'
+              ? (message.properties.headers as Record<string, unknown>)
+              : undefined;
 
-        channel.nack(message, false, true);
-        this.logger.error(
-          `Failed to parse DLQ message: ${errorDetails.message}`,
-          errorDetails.stack
-        );
+          messages.push({
+            content,
+            properties: {
+              messageId: message.properties.messageId as string | undefined,
+              timestamp: message.properties.timestamp as number | undefined,
+              headers,
+            },
+            deathInfo,
+          });
+        } catch (error) {
+          const errorDetails = getErrorDetails(error);
+
+          this.logger.error(
+            `Failed to parse DLQ message: ${errorDetails.message}`,
+            errorDetails.stack
+          );
+        }
       }
+    } finally {
+      this.requeue(channel, inspected);
     }
 
     return messages;
@@ -122,37 +133,48 @@ export class DlqService {
 
     const stats = await this.getStats();
 
+    const inspected: GetMessage[] = [];
+
     let found = false;
 
-    for (let i = 0; i < stats.messageCount; i++) {
-      const message = await channel.get(this.DLQ_NAME, { noAck: false });
+    try {
+      for (let i = 0; i < stats.messageCount; i++) {
+        const message = await channel.get(this.DLQ_NAME, { noAck: false });
 
-      if (!message) break;
-      try {
-        const content = JSON.parse(
-          message.content.toString()
-        ) as PaymentOrderMessage;
+        if (!message) break;
 
-        if (content?.orderId === orderId) {
-          found = true;
-          await this.rabbitMqService.publicMessage({
-            exchange: this.EXCHANGE,
-            routingKey: this.ROUTING_KEY,
-            message: content,
-          });
+        try {
+          const content = JSON.parse(
+            message.content.toString()
+          ) as PaymentOrderMessage;
 
-          channel.ack(message);
+          if (content?.orderId === orderId) {
+            found = true;
+
+            await this.rabbitMqService.publicMessage({
+              exchange: this.EXCHANGE,
+              routingKey: this.ROUTING_KEY,
+              message: content,
+            });
+
+            channel.ack(message);
+            break;
+          }
+
+          inspected.push(message);
+        } catch (error) {
+          const errorDetails = getErrorDetails(error);
+
+          inspected.push(message);
+
+          this.logger.error(
+            `Failed to process DLQ message: ${errorDetails.message}`,
+            errorDetails.stack
+          );
         }
-      } catch (error) {
-        const errorDetails = getErrorDetails(error);
-
-        channel.nack(message, false, true);
-
-        this.logger.error(
-          `Failed to process DLQ message: ${errorDetails.message}`,
-          errorDetails.stack
-        );
       }
+    } finally {
+      this.requeue(channel, inspected);
     }
 
     return found;
@@ -165,40 +187,44 @@ export class DlqService {
 
     this.logger.log(`Reprocessing ${stats.messageCount} messages from DLQ`);
 
+    const rejected: GetMessage[] = [];
+
     let processed = 0;
-    let failed = 0;
 
-    for (let i = 0; i < stats.messageCount; i++) {
-      const message = await channel.get(this.DLQ_NAME, { noAck: false });
+    try {
+      for (let i = 0; i < stats.messageCount; i++) {
+        const message = await channel.get(this.DLQ_NAME, { noAck: false });
 
-      if (!message) break;
+        if (!message) break;
 
-      try {
-        const content = JSON.parse(
-          message.content.toString()
-        ) as PaymentOrderMessage;
+        try {
+          const content = JSON.parse(
+            message.content.toString()
+          ) as PaymentOrderMessage;
 
-        await this.rabbitMqService.publicMessage({
-          exchange: this.EXCHANGE,
-          routingKey: this.ROUTING_KEY,
-          message: content,
-        });
+          await this.rabbitMqService.publicMessage({
+            exchange: this.EXCHANGE,
+            routingKey: this.ROUTING_KEY,
+            message: content,
+          });
 
-        channel.ack(message);
-        processed++;
-      } catch (error) {
-        const errorDetails = getErrorDetails(error);
+          channel.ack(message);
+          processed++;
+        } catch (error) {
+          const errorDetails = getErrorDetails(error);
 
-        channel.nack(message, false, true);
-        failed++;
+          rejected.push(message);
 
-        this.logger.error(
-          `Failed to process DLQ message: ${errorDetails.message}`,
-          errorDetails.stack
-        );
+          this.logger.error(
+            `Failed to process DLQ message: ${errorDetails.message}`,
+            errorDetails.stack
+          );
+        }
       }
+    } finally {
+      this.requeue(channel, rejected);
     }
 
-    return { processed, failed };
+    return { processed, failed: rejected.length };
   }
 }
