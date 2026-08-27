@@ -2,6 +2,7 @@ import { Logger, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { PinoLoggerService } from '@viniciusferreira7/signals/nest';
 import { AppModule } from './app.module';
+import { SWAGGER_PATH, setupSwagger } from './config/swagger.config';
 import { EnvService } from './env/env.service';
 
 async function bootstrap() {
@@ -22,10 +23,14 @@ async function bootstrap() {
     })
   );
 
+  setupSwagger(app);
+
   await app.listen(port);
 
   const logger = new Logger('Bootstrap');
   logger.log(`🚀  Payments service running on port ${port}`);
-  logger.log(`📚  Swagger documentation: <http://localhost:${port}/api/docs>`);
+  logger.log(
+    `📚  Swagger documentation: http://localhost:${port}/${SWAGGER_PATH}`
+  );
 }
 bootstrap();
