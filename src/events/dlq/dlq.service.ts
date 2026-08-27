@@ -157,4 +157,48 @@ export class DlqService {
 
     return found;
   }
+
+  public async reprocessAll(): Promise<{ processed: number; failed: number }> {
+    const channel = await this.getChannel();
+
+    const stats = await this.getStats();
+
+    this.logger.log(`Reprocessing ${stats.messageCount} messages from DLQ`);
+
+    let processed = 0;
+    let failed = 0;
+
+    for (let i = 0; i < stats.messageCount; i++) {
+      const message = await channel.get(this.DLQ_NAME, { noAck: false });
+
+      if (!message) break;
+
+      try {
+        const content = JSON.parse(
+          message.content.toString()
+        ) as PaymentOrderMessage;
+
+        await this.rabbitMqService.publicMessage({
+          exchange: this.EXCHANGE,
+          routingKey: this.ROUTING_KEY,
+          message: content,
+        });
+
+        channel.ack(message);
+        processed++;
+      } catch (error) {
+        const errorDetails = getErrorDetails(error);
+
+        channel.nack(message, false, true);
+        failed++;
+
+        this.logger.error(
+          `Failed to process DLQ message: ${errorDetails.message}`,
+          errorDetails.stack
+        );
+      }
+    }
+
+    return { processed, failed };
+  }
 }
