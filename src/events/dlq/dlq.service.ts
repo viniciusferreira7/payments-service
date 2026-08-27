@@ -14,12 +14,16 @@ import type { DLQStats } from './interfaces/dlq-stats.interface';
 export class DlqService {
   private readonly logger = new Logger(DlqService.name);
   private readonly DLQ_NAME: string;
+  private readonly EXCHANGE: string;
+  private readonly ROUTING_KEY: string;
 
   constructor(
     private readonly rabbitMqService: RabbitmqService,
     private readonly envService: EnvService
   ) {
     this.DLQ_NAME = `${this.envService.get('RABBITMQ_QUEUE_PAYMENTS')}.dlq`;
+    this.EXCHANGE = `${this.envService.get('RABBITMQ_EXCHANGE')}`;
+    this.ROUTING_KEY = `${this.envService.get('RABBITMQ_ROUTING_KEY_PAYMENT_ORDER')}`;
   }
 
   private async getChannel(): Promise<Channel> {
@@ -111,5 +115,46 @@ export class DlqService {
     }
 
     return messages;
+  }
+
+  public async reprocessMessage(orderId: string): Promise<boolean> {
+    const channel = await this.getChannel();
+
+    const stats = await this.getStats();
+
+    let found = false;
+
+    for (let i = 0; i < stats.messageCount; i++) {
+      const message = await channel.get(this.DLQ_NAME, { noAck: false });
+
+      if (!message) break;
+      try {
+        const content = JSON.parse(
+          message.content.toString()
+        ) as PaymentOrderMessage;
+
+        if (content?.orderId === orderId) {
+          found = true;
+          await this.rabbitMqService.publicMessage({
+            exchange: this.EXCHANGE,
+            routingKey: this.ROUTING_KEY,
+            message: content,
+          });
+
+          channel.ack(message);
+        }
+      } catch (error) {
+        const errorDetails = getErrorDetails(error);
+
+        channel.nack(message, false, true);
+
+        this.logger.error(
+          `Failed to process DLQ message: ${errorDetails.message}`,
+          errorDetails.stack
+        );
+      }
+    }
+
+    return found;
   }
 }
