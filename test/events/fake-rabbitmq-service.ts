@@ -16,7 +16,7 @@ import type { RabbitmqService } from '@/events/rabbitmq/rabbitmq.service';
  * the subscription and `deliver` drives a message through its callback:
  *
  * ```ts
- * await fake.deliver('payment_queue', makeOrder());
+ * await fake.deliver('payment_queue', makePaymentOrder());
  * ```
  */
 export class FakeRabbitmqService implements Partial<RabbitmqService> {

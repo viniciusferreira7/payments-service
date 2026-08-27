@@ -1,4 +1,5 @@
 import { Test, type TestingModule } from '@nestjs/testing';
+import { makePaymentOrder } from 'test/factories/make-payment-order';
 import { EnvService } from '@/env/env.service';
 import { RabbitmqService } from '../rabbitmq/rabbitmq.service';
 import type { IncomingPaymentOrderMessage } from './payment-queue.service';
@@ -9,21 +10,6 @@ const env: Record<string, string> = {
   RABBITMQ_EXCHANGE: 'payments',
   RABBITMQ_ROUTING_KEY_PAYMENT_ORDER: 'payment.order',
 };
-
-function makeOrder(
-  overrides: Partial<IncomingPaymentOrderMessage> = {}
-): IncomingPaymentOrderMessage {
-  return {
-    orderId: 'order-1',
-    userId: 'user-1',
-    amount: 100,
-    discount: 0,
-    items: [{ productId: 'product-1', quantity: 1, price: 100 }],
-    paymentMethod: 'credit_card',
-    createdAt: new Date(),
-    ...overrides,
-  };
-}
 
 describe('PaymentQueueService', () => {
   let service: PaymentQueueService;
@@ -72,7 +58,7 @@ describe('PaymentQueueService', () => {
     const callback = vi.fn().mockResolvedValue(undefined);
     await service.consumePaymentOrders(callback);
 
-    const order = makeOrder();
+    const order = makePaymentOrder<IncomingPaymentOrderMessage>();
     const subscription = rabbitMqService.subscribeToQueue.mock.calls[0][0];
     await subscription.callback(order);
 

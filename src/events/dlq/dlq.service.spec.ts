@@ -4,8 +4,8 @@ import {
   makeDlqDelivery,
   orderIdsIn,
 } from 'test/events/fake-dlq-channel';
+import { makePaymentOrder } from 'test/factories/make-payment-order';
 import { EnvService } from '@/env/env.service';
-import type { PaymentOrderMessage } from '../interfaces/payments-queue.interface';
 import { RabbitmqService } from '../rabbitmq/rabbitmq.service';
 import { DlqService } from './dlq.service';
 
@@ -16,21 +16,6 @@ const env: Record<string, string> = {
 };
 
 const DLQ_NAME = 'payment_queue.dlq';
-
-function makeOrder(
-  overrides: Partial<PaymentOrderMessage> = {}
-): PaymentOrderMessage {
-  return {
-    orderId: 'order-1',
-    userId: 'user-1',
-    amount: 100,
-    discount: 0,
-    items: [{ productId: 'product-1', quantity: 1, price: 100 }],
-    paymentMethod: 'credit_card',
-    createdAt: new Date('2026-01-01T00:00:00.000Z'),
-    ...overrides,
-  };
-}
 
 describe('DlqService', () => {
   let service: DlqService;
@@ -58,7 +43,7 @@ describe('DlqService', () => {
 
   describe('getStats', () => {
     it('reports the queue depth from the broker', async () => {
-      await setup(makeDlqChannel([makeDlqDelivery(makeOrder())]));
+      await setup(makeDlqChannel([makeDlqDelivery(makePaymentOrder())]));
 
       await expect(service.getStats()).resolves.toEqual({
         queueName: DLQ_NAME,
@@ -79,9 +64,9 @@ describe('DlqService', () => {
   describe('peekMessages', () => {
     it('returns each message once instead of re-reading the head', async () => {
       const channel = makeDlqChannel([
-        makeDlqDelivery(makeOrder({ orderId: 'order-1' })),
-        makeDlqDelivery(makeOrder({ orderId: 'order-2' })),
-        makeDlqDelivery(makeOrder({ orderId: 'order-3' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-1' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-2' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-3' })),
       ]);
       await setup(channel);
 
@@ -96,9 +81,9 @@ describe('DlqService', () => {
 
     it('leaves the queue untouched and in order', async () => {
       const channel = makeDlqChannel([
-        makeDlqDelivery(makeOrder({ orderId: 'order-1' })),
-        makeDlqDelivery(makeOrder({ orderId: 'order-2' })),
-        makeDlqDelivery(makeOrder({ orderId: 'order-3' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-1' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-2' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-3' })),
       ]);
       await setup(channel);
 
@@ -114,9 +99,9 @@ describe('DlqService', () => {
 
     it('stops at the limit', async () => {
       const channel = makeDlqChannel([
-        makeDlqDelivery(makeOrder({ orderId: 'order-1' })),
-        makeDlqDelivery(makeOrder({ orderId: 'order-2' })),
-        makeDlqDelivery(makeOrder({ orderId: 'order-3' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-1' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-2' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-3' })),
       ]);
       await setup(channel);
 
@@ -134,7 +119,7 @@ describe('DlqService', () => {
 
     it('maps the death info recorded by the broker', async () => {
       const channel = makeDlqChannel([
-        makeDlqDelivery(makeOrder(), {
+        makeDlqDelivery(makePaymentOrder(), {
           messageId: 'message-1',
           timestamp: 1_700_000_000,
           headers: {
@@ -170,7 +155,7 @@ describe('DlqService', () => {
     it('skips a malformed payload but still puts it back', async () => {
       const channel = makeDlqChannel([
         makeDlqDelivery('not json'),
-        makeDlqDelivery(makeOrder({ orderId: 'order-2' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-2' })),
       ]);
       await setup(channel);
 
@@ -186,8 +171,8 @@ describe('DlqService', () => {
   describe('reprocessMessage', () => {
     it('republishes the matching message and acks it', async () => {
       const channel = makeDlqChannel([
-        makeDlqDelivery(makeOrder({ orderId: 'order-1' })),
-        makeDlqDelivery(makeOrder({ orderId: 'order-2' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-1' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-2' })),
       ]);
       await setup(channel);
 
@@ -205,9 +190,9 @@ describe('DlqService', () => {
 
     it('puts the messages it scanned past back on the queue', async () => {
       const channel = makeDlqChannel([
-        makeDlqDelivery(makeOrder({ orderId: 'order-1' })),
-        makeDlqDelivery(makeOrder({ orderId: 'order-2' })),
-        makeDlqDelivery(makeOrder({ orderId: 'order-3' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-1' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-2' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-3' })),
       ]);
       await setup(channel);
 
@@ -218,9 +203,9 @@ describe('DlqService', () => {
 
     it('stops scanning once it finds the order', async () => {
       const channel = makeDlqChannel([
-        makeDlqDelivery(makeOrder({ orderId: 'order-1' })),
-        makeDlqDelivery(makeOrder({ orderId: 'order-2' })),
-        makeDlqDelivery(makeOrder({ orderId: 'order-3' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-1' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-2' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-3' })),
       ]);
       await setup(channel);
 
@@ -231,8 +216,8 @@ describe('DlqService', () => {
 
     it('reports no match and leaves the queue whole', async () => {
       const channel = makeDlqChannel([
-        makeDlqDelivery(makeOrder({ orderId: 'order-1' })),
-        makeDlqDelivery(makeOrder({ orderId: 'order-2' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-1' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-2' })),
       ]);
       await setup(channel);
 
@@ -245,7 +230,7 @@ describe('DlqService', () => {
     it('keeps a malformed message on the queue while it searches', async () => {
       const channel = makeDlqChannel([
         makeDlqDelivery('not json'),
-        makeDlqDelivery(makeOrder({ orderId: 'order-2' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-2' })),
       ]);
       await setup(channel);
 
@@ -258,8 +243,8 @@ describe('DlqService', () => {
   describe('reprocessAll', () => {
     it('republishes every message and drains the queue', async () => {
       const channel = makeDlqChannel([
-        makeDlqDelivery(makeOrder({ orderId: 'order-1' })),
-        makeDlqDelivery(makeOrder({ orderId: 'order-2' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-1' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-2' })),
       ]);
       await setup(channel);
 
@@ -275,7 +260,7 @@ describe('DlqService', () => {
     it('counts a malformed message once and leaves it behind', async () => {
       const channel = makeDlqChannel([
         makeDlqDelivery('not json'),
-        makeDlqDelivery(makeOrder({ orderId: 'order-2' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-2' })),
       ]);
       await setup(channel);
 

@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
+import { makePaymentOrder } from 'test/factories/make-payment-order';
 import type { PaymentOrderMessage } from '../interfaces/payments-queue.interface';
 import { PaymentQueueService } from '../payment-queue/payment-queue.service';
 import { PaymentConsumerService } from './payment-consumer.service';
@@ -8,21 +9,6 @@ type PaymentOrderHandler = (message: PaymentOrderMessage) => Promise<void>;
 
 /** Keeps the Nest logger quiet while the spies still record every call. */
 const silence = () => undefined;
-
-function makeOrder(
-  overrides: Partial<PaymentOrderMessage> = {}
-): PaymentOrderMessage {
-  return {
-    orderId: 'order-1',
-    userId: 'user-1',
-    amount: 100,
-    discount: 0,
-    items: [{ productId: 'product-1', quantity: 1, price: 100 }],
-    paymentMethod: 'credit_card',
-    createdAt: new Date(),
-    ...overrides,
-  };
-}
 
 describe('PaymentConsumerService', () => {
   let service: PaymentConsumerService;
@@ -89,7 +75,9 @@ describe('PaymentConsumerService', () => {
 
       // Called through a bare reference, with no receiver: an unbound handler
       // would blow up on `this.logger` instead of processing the message.
-      await expect(handler(makeOrder())).resolves.toBeUndefined();
+      await expect(
+        handler(makePaymentOrder<PaymentOrderMessage>())
+      ).resolves.toBeUndefined();
       expect(log).toHaveBeenCalledWith('Payment order received and validated');
     });
 
@@ -125,7 +113,7 @@ describe('PaymentConsumerService', () => {
   describe('processing a payment order', () => {
     it('accepts a valid message', async () => {
       const handler = await getRegisteredHandler();
-      const order = makeOrder();
+      const order = makePaymentOrder<PaymentOrderMessage>();
 
       await handler(order);
 
@@ -164,9 +152,9 @@ describe('PaymentConsumerService', () => {
       async (_case, overrides: Partial<PaymentOrderMessage>, reason) => {
         const handler = await getRegisteredHandler();
 
-        await expect(handler(makeOrder(overrides))).rejects.toThrow(
-          'Invalid payment message received'
-        );
+        await expect(
+          handler(makePaymentOrder<PaymentOrderMessage>(overrides))
+        ).rejects.toThrow('Invalid payment message received');
 
         expect(error).toHaveBeenCalledWith(reason);
         expect(error).toHaveBeenCalledWith('Invalid payment message received');
@@ -180,7 +168,9 @@ describe('PaymentConsumerService', () => {
       const handler = await getRegisteredHandler();
 
       await expect(
-        handler(makeOrder({ orderId: '', userId: '' }))
+        handler(
+          makePaymentOrder<PaymentOrderMessage>({ orderId: '', userId: '' })
+        )
       ).rejects.toThrow('Invalid payment message received');
 
       expect(error).toHaveBeenCalledWith('Missing orderId in payment message');
@@ -191,7 +181,7 @@ describe('PaymentConsumerService', () => {
 
     it('rejects an invalid message so the broker routes it to the DLQ', async () => {
       const handler = await getRegisteredHandler();
-      const order = makeOrder({ orderId: '' });
+      const order = makePaymentOrder<PaymentOrderMessage>({ orderId: '' });
 
       // `RabbitmqService.subscribeToQueue` nacks without requeue when the
       // handler rejects, which is what moves the message onto the DLQ.
@@ -213,7 +203,7 @@ describe('PaymentConsumerService', () => {
         throw failure;
       });
 
-      const order = makeOrder();
+      const order = makePaymentOrder<PaymentOrderMessage>();
 
       await expect(handler(order)).rejects.toThrow(failure);
       expect(error).toHaveBeenCalledWith(
@@ -229,7 +219,7 @@ describe('PaymentConsumerService', () => {
 
       await expect(
         handler(
-          makeOrder({
+          makePaymentOrder<PaymentOrderMessage>({
             amount: 130,
             discount: 0,
             items: [
@@ -248,7 +238,7 @@ describe('PaymentConsumerService', () => {
 
       await expect(
         handler(
-          makeOrder({
+          makePaymentOrder<PaymentOrderMessage>({
             amount: 80,
             discount: 20,
             items: [{ productId: 'product-1', quantity: 1, price: 100 }],
@@ -279,7 +269,7 @@ describe('PaymentConsumerService', () => {
 
       await expect(
         handler(
-          makeOrder({
+          makePaymentOrder<PaymentOrderMessage>({
             ...overrides,
             items: [{ productId: 'product-1', quantity: 1, price: 100 }],
           })
@@ -297,7 +287,7 @@ describe('PaymentConsumerService', () => {
       // Messages arrive as untyped JSON off the queue, so a producer on an
       // older contract can leave `discount` out entirely. The subtraction then
       // yields NaN, which must fail the check rather than pass it.
-      const order = makeOrder();
+      const order = makePaymentOrder<PaymentOrderMessage>();
       Reflect.deleteProperty(order, 'discount');
 
       await expect(handler(order)).rejects.toThrow(
@@ -314,9 +304,9 @@ describe('PaymentConsumerService', () => {
 
       // Reducing an empty list would total 0 and report a mismatch, masking
       // the real problem: the message carries no items at all.
-      await expect(handler(makeOrder({ items: [] }))).rejects.toThrow(
-        'Invalid payment message received'
-      );
+      await expect(
+        handler(makePaymentOrder<PaymentOrderMessage>({ items: [] }))
+      ).rejects.toThrow('Invalid payment message received');
 
       expect(error).toHaveBeenCalledWith('No items in payment message');
       expect(error).not.toHaveBeenCalledWith(
