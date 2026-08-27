@@ -227,4 +227,60 @@ export class DlqService {
 
     return { processed, failed: rejected.length };
   }
+
+  public async discardMessage(orderId: string): Promise<boolean> {
+    const channel = await this.getChannel();
+
+    const stats = await this.getStats();
+
+    const inspected: GetMessage[] = [];
+
+    let found = false;
+
+    try {
+      for (let i = 0; i < stats.messageCount; i++) {
+        const message = await channel.get(this.DLQ_NAME, { noAck: false });
+
+        if (!message) break;
+
+        try {
+          const content = JSON.parse(
+            message.content.toString()
+          ) as PaymentOrderMessage;
+
+          if (content?.orderId === orderId) {
+            channel.ack(message);
+            found = true;
+            this.logger.warn(`Message ${orderId} discarded from DLQ`);
+            break;
+          }
+
+          inspected.push(message);
+        } catch (error) {
+          const errorDetails = getErrorDetails(error);
+
+          inspected.push(message);
+
+          this.logger.error(
+            `Failed to read DLQ message: ${errorDetails.message}`,
+            errorDetails.stack
+          );
+        }
+      }
+    } finally {
+      this.requeue(channel, inspected);
+    }
+
+    return found;
+  }
+
+  async purgeAll(): Promise<number> {
+    const channel = await this.getChannel();
+
+    const result = await channel.purgeQueue(this.DLQ_NAME);
+
+    this.logger.warn(`Purged ${result.messageCount} messages from DLQ`);
+
+    return result.messageCount;
+  }
 }
