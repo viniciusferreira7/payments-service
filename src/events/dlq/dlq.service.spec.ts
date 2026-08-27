@@ -1,4 +1,9 @@
 import { Test, type TestingModule } from '@nestjs/testing';
+import {
+  makeDlqChannel,
+  makeDlqDelivery,
+  orderIdsIn,
+} from 'test/events/fake-dlq-channel';
 import { EnvService } from '@/env/env.service';
 import type { PaymentOrderMessage } from '../interfaces/payments-queue.interface';
 import { RabbitmqService } from '../rabbitmq/rabbitmq.service';
@@ -27,52 +32,6 @@ function makeOrder(
   };
 }
 
-function makeDelivery(
-  content: unknown,
-  properties: Record<string, unknown> = {}
-) {
-  return {
-    content: Buffer.from(
-      typeof content === 'string' ? content : JSON.stringify(content)
-    ),
-    properties: { headers: undefined, ...properties },
-  };
-}
-
-/**
- * Models the broker closely enough for these tests to mean something: `get`
- * hands out the head and holds it unacked, `ack` drops it, and a nack with
- * requeue puts it back at the head — which is what makes a naive scan loop
- * read the same message forever.
- */
-function makeChannel(initial: ReturnType<typeof makeDelivery>[] = []) {
-  const queue = [...initial];
-
-  return {
-    queue,
-    checkQueue: vi.fn(async (name: string) => ({
-      queue: name,
-      messageCount: queue.length,
-      consumerCount: 0,
-    })),
-    get: vi.fn(async () => queue.shift() ?? false),
-    ack: vi.fn(),
-    nack: vi.fn(
-      (
-        message: ReturnType<typeof makeDelivery>,
-        _allUpTo: boolean,
-        requeue: boolean
-      ) => {
-        if (requeue) queue.unshift(message);
-      }
-    ),
-  };
-}
-
-function orderIdsIn(queue: ReturnType<typeof makeDelivery>[]) {
-  return queue.map((message) => JSON.parse(message.content.toString()).orderId);
-}
-
 describe('DlqService', () => {
   let service: DlqService;
   let rabbitMqService: {
@@ -99,7 +58,7 @@ describe('DlqService', () => {
 
   describe('getStats', () => {
     it('reports the queue depth from the broker', async () => {
-      await setup(makeChannel([makeDelivery(makeOrder())]));
+      await setup(makeDlqChannel([makeDlqDelivery(makeOrder())]));
 
       await expect(service.getStats()).resolves.toEqual({
         queueName: DLQ_NAME,
@@ -119,10 +78,10 @@ describe('DlqService', () => {
 
   describe('peekMessages', () => {
     it('returns each message once instead of re-reading the head', async () => {
-      const channel = makeChannel([
-        makeDelivery(makeOrder({ orderId: 'order-1' })),
-        makeDelivery(makeOrder({ orderId: 'order-2' })),
-        makeDelivery(makeOrder({ orderId: 'order-3' })),
+      const channel = makeDlqChannel([
+        makeDlqDelivery(makeOrder({ orderId: 'order-1' })),
+        makeDlqDelivery(makeOrder({ orderId: 'order-2' })),
+        makeDlqDelivery(makeOrder({ orderId: 'order-3' })),
       ]);
       await setup(channel);
 
@@ -136,10 +95,10 @@ describe('DlqService', () => {
     });
 
     it('leaves the queue untouched and in order', async () => {
-      const channel = makeChannel([
-        makeDelivery(makeOrder({ orderId: 'order-1' })),
-        makeDelivery(makeOrder({ orderId: 'order-2' })),
-        makeDelivery(makeOrder({ orderId: 'order-3' })),
+      const channel = makeDlqChannel([
+        makeDlqDelivery(makeOrder({ orderId: 'order-1' })),
+        makeDlqDelivery(makeOrder({ orderId: 'order-2' })),
+        makeDlqDelivery(makeOrder({ orderId: 'order-3' })),
       ]);
       await setup(channel);
 
@@ -154,10 +113,10 @@ describe('DlqService', () => {
     });
 
     it('stops at the limit', async () => {
-      const channel = makeChannel([
-        makeDelivery(makeOrder({ orderId: 'order-1' })),
-        makeDelivery(makeOrder({ orderId: 'order-2' })),
-        makeDelivery(makeOrder({ orderId: 'order-3' })),
+      const channel = makeDlqChannel([
+        makeDlqDelivery(makeOrder({ orderId: 'order-1' })),
+        makeDlqDelivery(makeOrder({ orderId: 'order-2' })),
+        makeDlqDelivery(makeOrder({ orderId: 'order-3' })),
       ]);
       await setup(channel);
 
@@ -168,14 +127,14 @@ describe('DlqService', () => {
     });
 
     it('returns nothing when the queue is empty', async () => {
-      await setup(makeChannel());
+      await setup(makeDlqChannel());
 
       await expect(service.peekMessages()).resolves.toEqual([]);
     });
 
     it('maps the death info recorded by the broker', async () => {
-      const channel = makeChannel([
-        makeDelivery(makeOrder(), {
+      const channel = makeDlqChannel([
+        makeDlqDelivery(makeOrder(), {
           messageId: 'message-1',
           timestamp: 1_700_000_000,
           headers: {
@@ -209,9 +168,9 @@ describe('DlqService', () => {
     });
 
     it('skips a malformed payload but still puts it back', async () => {
-      const channel = makeChannel([
-        makeDelivery('not json'),
-        makeDelivery(makeOrder({ orderId: 'order-2' })),
+      const channel = makeDlqChannel([
+        makeDlqDelivery('not json'),
+        makeDlqDelivery(makeOrder({ orderId: 'order-2' })),
       ]);
       await setup(channel);
 
@@ -226,9 +185,9 @@ describe('DlqService', () => {
 
   describe('reprocessMessage', () => {
     it('republishes the matching message and acks it', async () => {
-      const channel = makeChannel([
-        makeDelivery(makeOrder({ orderId: 'order-1' })),
-        makeDelivery(makeOrder({ orderId: 'order-2' })),
+      const channel = makeDlqChannel([
+        makeDlqDelivery(makeOrder({ orderId: 'order-1' })),
+        makeDlqDelivery(makeOrder({ orderId: 'order-2' })),
       ]);
       await setup(channel);
 
@@ -245,10 +204,10 @@ describe('DlqService', () => {
     });
 
     it('puts the messages it scanned past back on the queue', async () => {
-      const channel = makeChannel([
-        makeDelivery(makeOrder({ orderId: 'order-1' })),
-        makeDelivery(makeOrder({ orderId: 'order-2' })),
-        makeDelivery(makeOrder({ orderId: 'order-3' })),
+      const channel = makeDlqChannel([
+        makeDlqDelivery(makeOrder({ orderId: 'order-1' })),
+        makeDlqDelivery(makeOrder({ orderId: 'order-2' })),
+        makeDlqDelivery(makeOrder({ orderId: 'order-3' })),
       ]);
       await setup(channel);
 
@@ -258,10 +217,10 @@ describe('DlqService', () => {
     });
 
     it('stops scanning once it finds the order', async () => {
-      const channel = makeChannel([
-        makeDelivery(makeOrder({ orderId: 'order-1' })),
-        makeDelivery(makeOrder({ orderId: 'order-2' })),
-        makeDelivery(makeOrder({ orderId: 'order-3' })),
+      const channel = makeDlqChannel([
+        makeDlqDelivery(makeOrder({ orderId: 'order-1' })),
+        makeDlqDelivery(makeOrder({ orderId: 'order-2' })),
+        makeDlqDelivery(makeOrder({ orderId: 'order-3' })),
       ]);
       await setup(channel);
 
@@ -271,9 +230,9 @@ describe('DlqService', () => {
     });
 
     it('reports no match and leaves the queue whole', async () => {
-      const channel = makeChannel([
-        makeDelivery(makeOrder({ orderId: 'order-1' })),
-        makeDelivery(makeOrder({ orderId: 'order-2' })),
+      const channel = makeDlqChannel([
+        makeDlqDelivery(makeOrder({ orderId: 'order-1' })),
+        makeDlqDelivery(makeOrder({ orderId: 'order-2' })),
       ]);
       await setup(channel);
 
@@ -284,9 +243,9 @@ describe('DlqService', () => {
     });
 
     it('keeps a malformed message on the queue while it searches', async () => {
-      const channel = makeChannel([
-        makeDelivery('not json'),
-        makeDelivery(makeOrder({ orderId: 'order-2' })),
+      const channel = makeDlqChannel([
+        makeDlqDelivery('not json'),
+        makeDlqDelivery(makeOrder({ orderId: 'order-2' })),
       ]);
       await setup(channel);
 
@@ -298,9 +257,9 @@ describe('DlqService', () => {
 
   describe('reprocessAll', () => {
     it('republishes every message and drains the queue', async () => {
-      const channel = makeChannel([
-        makeDelivery(makeOrder({ orderId: 'order-1' })),
-        makeDelivery(makeOrder({ orderId: 'order-2' })),
+      const channel = makeDlqChannel([
+        makeDlqDelivery(makeOrder({ orderId: 'order-1' })),
+        makeDlqDelivery(makeOrder({ orderId: 'order-2' })),
       ]);
       await setup(channel);
 
@@ -314,9 +273,9 @@ describe('DlqService', () => {
     });
 
     it('counts a malformed message once and leaves it behind', async () => {
-      const channel = makeChannel([
-        makeDelivery('not json'),
-        makeDelivery(makeOrder({ orderId: 'order-2' })),
+      const channel = makeDlqChannel([
+        makeDlqDelivery('not json'),
+        makeDlqDelivery(makeOrder({ orderId: 'order-2' })),
       ]);
       await setup(channel);
 
@@ -330,7 +289,7 @@ describe('DlqService', () => {
     });
 
     it('does nothing on an empty queue', async () => {
-      const channel = makeChannel();
+      const channel = makeDlqChannel();
       await setup(channel);
 
       await expect(service.reprocessAll()).resolves.toEqual({
