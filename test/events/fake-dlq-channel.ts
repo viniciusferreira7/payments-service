@@ -50,6 +50,13 @@ export function makeDlqChannel(initial: DlqDelivery[] = []) {
       consumerCount: 0,
     })),
     get: vi.fn(async () => queue.shift() ?? false),
+    purgeQueue: vi.fn(async () => {
+      const messageCount = queue.length;
+
+      queue.length = 0;
+
+      return { messageCount };
+    }),
     ack: vi.fn(),
     nack: vi.fn((message: DlqDelivery, _allUpTo: boolean, requeue: boolean) => {
       if (requeue) queue.unshift(message);

@@ -285,4 +285,107 @@ describe('DlqService', () => {
       expect(rabbitMqService.publicMessage).not.toHaveBeenCalled();
     });
   });
+  describe('discardMessage', () => {
+    it('acks the matching message without republishing it', async () => {
+      const channel = makeDlqChannel([
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-1' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-2' })),
+      ]);
+      await setup(channel);
+
+      await expect(service.discardMessage('order-2')).resolves.toBe(true);
+
+      expect(channel.ack).toHaveBeenCalledTimes(1);
+      expect(rabbitMqService.publicMessage).not.toHaveBeenCalled();
+      expect(orderIdsIn(channel.queue)).toEqual(['order-1']);
+    });
+
+    it('puts the messages it scanned past back in order', async () => {
+      const channel = makeDlqChannel([
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-1' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-2' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-3' })),
+      ]);
+      await setup(channel);
+
+      await service.discardMessage('order-3');
+
+      expect(orderIdsIn(channel.queue)).toEqual(['order-1', 'order-2']);
+    });
+
+    it('stops scanning once it finds the order', async () => {
+      const channel = makeDlqChannel([
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-1' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-2' })),
+      ]);
+      await setup(channel);
+
+      await service.discardMessage('order-1');
+
+      expect(channel.get).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports no match and leaves the queue whole', async () => {
+      const channel = makeDlqChannel([
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-1' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-2' })),
+      ]);
+      await setup(channel);
+
+      await expect(service.discardMessage('order-9')).resolves.toBe(false);
+
+      expect(channel.ack).not.toHaveBeenCalled();
+      expect(orderIdsIn(channel.queue)).toEqual(['order-1', 'order-2']);
+    });
+
+    it('keeps a malformed message on the queue while it searches', async () => {
+      const channel = makeDlqChannel([
+        makeDlqDelivery('not json'),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-2' })),
+      ]);
+      await setup(channel);
+
+      await expect(service.discardMessage('order-2')).resolves.toBe(true);
+
+      expect(channel.queue).toHaveLength(1);
+      expect(channel.queue[0].content.toString()).toBe('not json');
+    });
+
+    it('fails when the channel is not available', async () => {
+      await setup(undefined);
+
+      await expect(service.discardMessage('order-1')).rejects.toThrow(
+        'RabbitMQ channel not available'
+      );
+    });
+  });
+
+  describe('purgeAll', () => {
+    it('empties the queue and reports how many it dropped', async () => {
+      const channel = makeDlqChannel([
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-1' })),
+        makeDlqDelivery(makePaymentOrder({ orderId: 'order-2' })),
+      ]);
+      await setup(channel);
+
+      await expect(service.purgeAll()).resolves.toBe(2);
+
+      expect(channel.purgeQueue).toHaveBeenCalledWith(DLQ_NAME);
+      expect(channel.queue).toHaveLength(0);
+    });
+
+    it('reports zero on an already empty queue', async () => {
+      await setup(makeDlqChannel());
+
+      await expect(service.purgeAll()).resolves.toBe(0);
+    });
+
+    it('fails when the channel is not available', async () => {
+      await setup(undefined);
+
+      await expect(service.purgeAll()).rejects.toThrow(
+        'RabbitMQ channel not available'
+      );
+    });
+  });
 });
