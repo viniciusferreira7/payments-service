@@ -1,10 +1,16 @@
 import { Module } from '@nestjs/common';
+import { DlqService } from './dlq/dlq.service';
 import { PaymentQueueService } from './payment-queue/payment-queue.service';
 import { PaymentConsumerService } from './payment-service/payment-consumer.service';
 import { RabbitmqService } from './rabbitmq/rabbitmq.service';
 
 @Module({
-  providers: [RabbitmqService, PaymentQueueService, PaymentConsumerService],
+  providers: [
+    RabbitmqService,
+    PaymentQueueService,
+    PaymentConsumerService,
+    DlqService,
+  ],
   exports: [PaymentQueueService],
 })
 export class EventsModule {}
