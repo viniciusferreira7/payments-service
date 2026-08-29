@@ -6,14 +6,6 @@ import type {
 } from '../interfaces/dlq-message.interface';
 import type { DLQStats } from '../interfaces/dlq-stats.interface';
 
-/**
- * Response shapes for the dead letter queue endpoints.
- *
- * They exist as classes because the OpenAPI document is built from runtime
- * metadata: the interfaces in `./interfaces` are erased at compile time, so
- * Swagger has nothing to read from them.
- */
-
 export class DlqStatsResponseDto implements DLQStats {
   @ApiProperty({
     description: 'Name of the dead letter queue being inspected',

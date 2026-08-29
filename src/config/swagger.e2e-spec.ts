@@ -4,11 +4,6 @@ import request from 'supertest';
 import { makeModuleRef, startApp } from 'test/factories/make-module-ref';
 import { SWAGGER_PATH, setupSwagger } from './swagger.config';
 
-/**
- * The slice of JSON Schema these assertions read. The typed OpenAPI interfaces
- * model every member as a union with `ReferenceObject`, which buys nothing
- * here: the document is data under test, so it is narrowed on the way in.
- */
 interface JsonSchema {
   $ref?: string;
   type?: string;
@@ -20,10 +15,8 @@ interface JsonSchema {
 describe('Swagger (e2e)', () => {
   let app: INestApplication;
 
-  /** The document as a client reading `/api/docs-json` receives it. */
   let document: OpenAPIObject;
 
-  /** The schema a route answers `status` with, as JSON. */
   function responseSchema(
     path: string,
     method: 'get' | 'post' | 'delete',
@@ -36,7 +29,6 @@ describe('Swagger (e2e)', () => {
     return response?.content?.['application/json']?.schema ?? {};
   }
 
-  /** A named schema from `components.schemas`, as JSON. */
   function componentSchema(name: string): JsonSchema {
     return (document.components?.schemas?.[name] ?? {}) as JsonSchema;
   }

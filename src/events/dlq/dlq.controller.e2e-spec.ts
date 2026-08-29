@@ -12,42 +12,26 @@ import type { PaymentOrderMessage } from '@/events/interfaces/payments-queue.int
 import { RabbitmqService } from '@/events/rabbitmq/rabbitmq.service';
 import { waitForConnection } from '@/utils/wait-for-connection';
 
-/**
- * The dead letter endpoints against a real RabbitMQ.
- *
- * Nothing here is faked: the application asserts its own topology on boot, the
- * consumer rejects what it cannot process, and the broker is what moves those
- * messages onto the dead letter queue. That is the part a double cannot prove —
- * the `x-death` headers, the dead letter routing, and what happens when a
- * reprocessed order is rejected a second time.
- *
- * The topology is named per run, so the queues a developer is working with are
- * never consumed from or purged, and it is deleted on the way out.
- */
 describe('DlqController (e2e)', () => {
   const topology = makeBrokerTopology();
 
   let app: INestApplication;
   let rabbitmq: RabbitmqService;
 
-  /** An order `PaymentConsumerService` accepts. */
   function validOrder(orderId: string): PaymentOrderMessage {
     return makePaymentOrder({ orderId });
   }
 
-  /** An order the consumer rejects: `amount` does not match its items. */
   function rejectedOrder(orderId: string): PaymentOrderMessage {
     return makePaymentOrder({ orderId, amount: 999 });
   }
 
-  /** Ready messages sitting on a queue, as the broker counts them. */
   async function messageCount(queue: string): Promise<number> {
     const { messageCount } = await rabbitmq.getChannel().checkQueue(queue);
 
     return messageCount;
   }
 
-  /** Polls until the broker settles, rather than sleeping for a fixed spell. */
   async function waitUntil(
     description: string,
     predicate: () => Promise<boolean>
@@ -63,7 +47,6 @@ describe('DlqController (e2e)', () => {
     }
   }
 
-  /** Publishes to the payments exchange, the way the checkout service does. */
   async function publishOrder(order: PaymentOrderMessage): Promise<void> {
     await rabbitmq.publicMessage({
       exchange: topology.exchange,
@@ -72,11 +55,6 @@ describe('DlqController (e2e)', () => {
     });
   }
 
-  /**
-   * Puts orders straight onto the dead letter queue, through the dead letter
-   * exchange, for cases whose subject is what happens *after* a message is
-   * dead lettered rather than how it got there.
-   */
   async function deadLetter(...orders: PaymentOrderMessage[]): Promise<void> {
     for (const order of orders) {
       rabbitmq
@@ -113,8 +91,6 @@ describe('DlqController (e2e)', () => {
     app = await startApp(moduleRef);
     rabbitmq = app.get(RabbitmqService);
 
-    // The consumer declares the topology on bootstrap; wait for it to exist
-    // before the first case publishes into it.
     await waitUntil('the payments queue is declared', async () => {
       try {
         await messageCount(topology.dlq);

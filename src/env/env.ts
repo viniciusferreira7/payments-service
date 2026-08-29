@@ -25,10 +25,6 @@ export const envSchema = z.object({
   JWT_EXPIRES_IN: z.string().min(2),
 
   RABBITMQ_URL: z.url(),
-  // The throwaway broker the test lanes run against — `docker compose
-  // --profile test up -d`. It is a separate variable, not an override of
-  // RABBITMQ_URL, so a test run cannot end up pointed at the shared broker the
-  // other services consume from.
   RABBITMQ_TEST_URL: z.url().default('amqp://test:test@localhost:5673'),
   RABBITMQ_QUEUE_PAYMENTS: z.string().min(1),
   RABBITMQ_EXCHANGE: z.string().min(1),

@@ -5,18 +5,10 @@ import { makeModuleRef, startApp } from 'test/factories/make-module-ref';
 import { makePaymentOrder } from 'test/factories/make-payment-order';
 import { RabbitmqService } from '@/events/rabbitmq/rabbitmq.service';
 
-/**
- * The dead letter endpoints wired through the DI container against a fake
- * broker, so the response contract — bodies, status codes, what each call does
- * to the queue — is pinned without waiting on real infra. What the broker
- * itself does with a dead lettered message is covered by
- * `dlq.controller.e2e-spec.ts`.
- */
 describe('DlqController (integration)', () => {
   let app: INestApplication;
   let rabbitmq: FakeDlqRabbitmqService;
 
-  /** The queue name `DlqService` derives from `RABBITMQ_QUEUE_PAYMENTS`. */
   const DLQ_NAME = 'payment_queue.dlq';
 
   beforeEach(async () => {

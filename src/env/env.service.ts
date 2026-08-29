@@ -11,11 +11,6 @@ export class EnvService {
     return this.configService.get<T>(key, { infer: true });
   }
 
-  /**
-   * The broker to connect to. Under `NODE_ENV=test` that is the throwaway
-   * broker in `RABBITMQ_TEST_URL`: the test lanes declare, purge and delete
-   * queues, which has no business happening on the shared broker.
-   */
   get rabbitmqUrl(): string {
     return this.get('NODE_ENV') === 'test'
       ? this.get('RABBITMQ_TEST_URL')

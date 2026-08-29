@@ -20,7 +20,6 @@ describe('EnvService', () => {
   });
 
   describe('rabbitmqUrl', () => {
-    /** Answers each key from `env`, the way ConfigService would. */
     function withEnv(env: Record<string, string>): EnvService {
       return new EnvService({
         get: vi.fn((key: string) => env[key]),
