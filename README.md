@@ -32,11 +32,19 @@ pnpm start:dev
 
 The e2e lane needs its own broker — a throwaway one, so declaring and purging
 queues never touches the shared `marketplace-rabbitmq` the other services
-consume from. It sits behind the `test` profile, on 5673:
+consume from. It sits behind the `test` profile, on 5673.
+
+`pnpm test:e2e` boots that infrastructure itself, through `pnpm test:infra`:
 
 ```bash
-docker compose --profile test up -d
+pnpm test:infra
 ```
+
+It brings up Postgres and the test broker (`docker compose --profile test up -d
+--wait`, so it returns only once both are healthy) and then creates the `test`
+role and the `payments_test` database the lanes connect to, if they are missing.
+Both steps are idempotent — running it against live containers is a no-op.
+`pnpm test:infra:down` stops everything again.
 
 ## Scripts
 
@@ -46,9 +54,11 @@ docker compose --profile test up -d
 | `pnpm build` | Compile to `dist/` |
 | `pnpm check` / `pnpm check:fix` | Biome lint + format |
 | `pnpm check:type` | `tsc --noEmit` |
+| `pnpm test:infra` | Boots Postgres + the test broker and seeds the test role/database |
+| `pnpm test:infra:down` | Stops the test infrastructure |
 | `pnpm test:unit` | Unit lane — `*.spec.ts`, no infra |
 | `pnpm test:int` | Integration lane — `*.int-spec.ts`, real Postgres, faked broker |
-| `pnpm test:e2e` | E2E lane — `*.e2e-spec.ts`, full HTTP boot against the test broker |
+| `pnpm test:e2e` | E2E lane — `*.e2e-spec.ts`, full HTTP boot against the test broker (runs `test:infra` first) |
 | `pnpm test:cov` | Unit lane with coverage |
 
 ## Layout
@@ -63,6 +73,8 @@ src/
     rabbitmq/              Connection, channel, publish and subscribe primitives
     payment-queue/         Consumer for `payment.order`
   auth/  common/  health/  payments/  services/  utils/
+scripts/
+  test-infra.sh            Boots and seeds the infrastructure the test lanes need
 test/
   setup-env.ts             Env defaults for the int/e2e lanes
   factories/               DI container and HTTP app builders
