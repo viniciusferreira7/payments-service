@@ -32,12 +32,43 @@ import { FakeRabbitmqService } from '../events/fake-rabbitmq-service';
 export async function makeModuleRef(
   configure?: (builder: TestingModuleBuilder) => TestingModuleBuilder
 ): Promise<TestingModule> {
+  return makeBrokerModuleRef((builder) => {
+    const withFakeBroker = builder
+      .overrideProvider(RabbitmqService)
+      .useClass(FakeRabbitmqService);
+
+    return configure ? configure(withFakeBroker) : withFakeBroker;
+  });
+}
+
+/**
+ * The same container, but talking to a real RabbitMQ — for specs whose subject
+ * is the broker itself: the dead letter topology, what the consumer rejects,
+ * what comes back out of the dead letter queue.
+ *
+ * Booting this asserts the exchanges and queues named by the environment, so
+ * give it a topology of its own rather than the developer's:
+ *
+ * ```ts
+ * const topology = makeBrokerTopology();
+ *
+ * const moduleRef = await makeBrokerModuleRef((builder) =>
+ *   builder.overrideProvider(EnvService).useValue(
+ *     makeEnvService({
+ *       RABBITMQ_QUEUE_PAYMENTS: topology.queue,
+ *       RABBITMQ_EXCHANGE: topology.exchange,
+ *     })
+ *   )
+ * );
+ * ```
+ */
+export async function makeBrokerModuleRef(
+  configure?: (builder: TestingModuleBuilder) => TestingModuleBuilder
+): Promise<TestingModule> {
   let builder = Test.createTestingModule({
     imports: [AppModule, EnvModule, EventsModule],
     providers: [],
-  })
-    .overrideProvider(RabbitmqService)
-    .useClass(FakeRabbitmqService);
+  });
 
   if (configure) {
     builder = configure(builder);

@@ -1,215 +1,295 @@
 import type { INestApplication } from '@nestjs/common';
 import request from 'supertest';
-import { FakeDlqRabbitmqService } from 'test/events/fake-dlq-rabbitmq-service';
-import { makeModuleRef, startApp } from 'test/factories/make-module-ref';
+import {
+  deleteBrokerTopology,
+  makeBrokerTopology,
+} from 'test/events/broker-topology';
+import { makeEnvService } from 'test/factories/make-env-service';
+import { makeBrokerModuleRef, startApp } from 'test/factories/make-module-ref';
 import { makePaymentOrder } from 'test/factories/make-payment-order';
+import { EnvService } from '@/env/env.service';
+import type { PaymentOrderMessage } from '@/events/interfaces/payments-queue.interface';
 import { RabbitmqService } from '@/events/rabbitmq/rabbitmq.service';
+import { waitForConnection } from '@/utils/wait-for-connection';
 
+/**
+ * The dead letter endpoints against a real RabbitMQ.
+ *
+ * Nothing here is faked: the application asserts its own topology on boot, the
+ * consumer rejects what it cannot process, and the broker is what moves those
+ * messages onto the dead letter queue. That is the part a double cannot prove —
+ * the `x-death` headers, the dead letter routing, and what happens when a
+ * reprocessed order is rejected a second time.
+ *
+ * The topology is named per run, so the queues a developer is working with are
+ * never consumed from or purged, and it is deleted on the way out.
+ */
 describe('DlqController (e2e)', () => {
+  const topology = makeBrokerTopology();
+
   let app: INestApplication;
-  let rabbitmq: FakeDlqRabbitmqService;
+  let rabbitmq: RabbitmqService;
 
-  /** The queue name `DlqService` derives from `RABBITMQ_QUEUE_PAYMENTS`. */
-  const DLQ_NAME = 'payment_queue.dlq';
+  /** An order `PaymentConsumerService` accepts. */
+  function validOrder(orderId: string): PaymentOrderMessage {
+    return makePaymentOrder({ orderId });
+  }
 
-  beforeEach(async () => {
-    rabbitmq = new FakeDlqRabbitmqService();
+  /** An order the consumer rejects: `amount` does not match its items. */
+  function rejectedOrder(orderId: string): PaymentOrderMessage {
+    return makePaymentOrder({ orderId, amount: 999 });
+  }
 
-    const moduleRef = await makeModuleRef((builder) =>
-      builder.overrideProvider(RabbitmqService).useValue(rabbitmq)
+  /** Ready messages sitting on a queue, as the broker counts them. */
+  async function messageCount(queue: string): Promise<number> {
+    const { messageCount } = await rabbitmq.getChannel().checkQueue(queue);
+
+    return messageCount;
+  }
+
+  /** Polls until the broker settles, rather than sleeping for a fixed spell. */
+  async function waitUntil(
+    description: string,
+    predicate: () => Promise<boolean>
+  ): Promise<void> {
+    const settled = await waitForConnection({
+      maxAttempt: 50,
+      delayMs: 100,
+      callback: predicate,
+    });
+
+    if (!settled) {
+      throw new Error(`Timed out waiting until ${description}`);
+    }
+  }
+
+  /** Publishes to the payments exchange, the way the checkout service does. */
+  async function publishOrder(order: PaymentOrderMessage): Promise<void> {
+    await rabbitmq.publicMessage({
+      exchange: topology.exchange,
+      routingKey: topology.routingKey,
+      message: order,
+    });
+  }
+
+  /**
+   * Puts orders straight onto the dead letter queue, through the dead letter
+   * exchange, for cases whose subject is what happens *after* a message is
+   * dead lettered rather than how it got there.
+   */
+  async function deadLetter(...orders: PaymentOrderMessage[]): Promise<void> {
+    for (const order of orders) {
+      rabbitmq
+        .getChannel()
+        .publish(
+          topology.dlxExchange,
+          topology.dlqRoutingKey,
+          Buffer.from(JSON.stringify(order)),
+          { persistent: true, contentType: 'application/json' }
+        );
+    }
+
+    await waitUntil(
+      `${orders.length} message(s) reach the dead letter queue`,
+      async () => (await messageCount(topology.dlq)) === orders.length
+    );
+  }
+
+  function peek() {
+    return request(app.getHttpServer()).get('/dlq/messages');
+  }
+
+  beforeAll(async () => {
+    const moduleRef = await makeBrokerModuleRef((builder) =>
+      builder.overrideProvider(EnvService).useValue(
+        makeEnvService({
+          RABBITMQ_QUEUE_PAYMENTS: topology.queue,
+          RABBITMQ_EXCHANGE: topology.exchange,
+          RABBITMQ_ROUTING_KEY_PAYMENT_ORDER: topology.routingKey,
+        })
+      )
     );
 
     app = await startApp(moduleRef);
+    rabbitmq = app.get(RabbitmqService);
+
+    // The consumer declares the topology on bootstrap; wait for it to exist
+    // before the first case publishes into it.
+    await waitUntil('the payments queue is declared', async () => {
+      try {
+        await messageCount(topology.dlq);
+        return true;
+      } catch {
+        return false;
+      }
+    });
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
     await app.close();
+    await deleteBrokerTopology(process.env.RABBITMQ_URL as string, topology);
   });
 
-  describe('GET /dlq/stats', () => {
-    it('reports what the dead letter queue holds', async () => {
-      rabbitmq.seed(
-        makePaymentOrder({ orderId: 'order-1' }),
-        makePaymentOrder({ orderId: 'order-2' })
-      );
-
-      const response = await request(app.getHttpServer())
-        .get('/dlq/stats')
-        .expect(200);
-
-      expect(response.body).toEqual({
-        queueName: DLQ_NAME,
-        messageCount: 2,
-        consumerCount: 0,
-      });
-    });
-
-    it('reports an empty queue', async () => {
-      const response = await request(app.getHttpServer())
-        .get('/dlq/stats')
-        .expect(200);
-
-      expect(response.body.messageCount).toBe(0);
-    });
+  beforeEach(async () => {
+    await rabbitmq.getChannel().purgeQueue(topology.queue);
+    await rabbitmq.getChannel().purgeQueue(topology.dlq);
   });
 
-  describe('GET /dlq/messages', () => {
-    it('returns the messages without consuming them', async () => {
-      rabbitmq.seed(
-        makePaymentOrder({ orderId: 'order-1' }),
-        makePaymentOrder({ orderId: 'order-2' })
-      );
+  it('exposes an order the consumer rejected, with why the broker dead lettered it', async () => {
+    await publishOrder(rejectedOrder('order-rejected'));
 
-      const response = await request(app.getHttpServer())
-        .get('/dlq/messages')
-        .expect(200);
+    await waitUntil(
+      'the rejected order reaches the dead letter queue',
+      async () => (await messageCount(topology.dlq)) === 1
+    );
 
-      expect(response.body.count).toBe(2);
-      expect(
-        response.body.messages.map(
-          (message: { content: { orderId: string } }) => message.content.orderId
-        )
-      ).toEqual(['order-1', 'order-2']);
+    const stats = await request(app.getHttpServer())
+      .get('/dlq/stats')
+      .expect(200);
 
-      expect(rabbitmq.orderIds).toEqual(['order-1', 'order-2']);
+    expect(stats.body).toEqual({
+      queueName: topology.dlq,
+      messageCount: 1,
+      consumerCount: 0,
     });
 
-    it('honours the limit query parameter', async () => {
-      rabbitmq.seed(
-        makePaymentOrder({ orderId: 'order-1' }),
-        makePaymentOrder({ orderId: 'order-2' })
-      );
+    const { body } = await peek().expect(200);
 
-      const response = await request(app.getHttpServer())
-        .get('/dlq/messages')
-        .query({ limit: '1' })
-        .expect(200);
-
-      expect(response.body.count).toBe(1);
-      expect(rabbitmq.orderIds).toEqual(['order-1', 'order-2']);
+    expect(body.count).toBe(1);
+    expect(body.messages[0].content.orderId).toBe('order-rejected');
+    expect(body.messages[0].deathInfo).toMatchObject({
+      reason: 'rejected',
+      queue: topology.queue,
+      exchange: topology.exchange,
+      count: 1,
     });
   });
 
-  describe('POST /dlq/reprocess/:orderId', () => {
-    it('republishes the matching message to the main queue', async () => {
-      rabbitmq.seed(
-        makePaymentOrder({ orderId: 'order-1' }),
-        makePaymentOrder({ orderId: 'order-2' })
-      );
+  it('leaves the messages it peeked at on the queue', async () => {
+    await deadLetter(validOrder('order-1'), validOrder('order-2'));
 
-      const response = await request(app.getHttpServer())
-        .post('/dlq/reprocess/order-2')
-        .expect(201);
+    const { body } = await peek().expect(200);
 
-      expect(response.body).toEqual({
-        success: true,
-        message: 'Message order-2 sent back to main queue for reprocessing',
-      });
+    expect(body.count).toBe(2);
 
-      expect(rabbitmq.published).toHaveLength(1);
-      expect(rabbitmq.published[0]).toMatchObject({
-        exchange: 'payments',
-        routingKey: 'payment.order',
-        message: expect.objectContaining({ orderId: 'order-2' }),
-      });
+    await waitUntil(
+      'both messages are back on the dead letter queue',
+      async () => (await messageCount(topology.dlq)) === 2
+    );
+  });
 
-      expect(rabbitmq.orderIds).toEqual(['order-1']);
+  it('honours the limit query parameter', async () => {
+    await deadLetter(validOrder('order-1'), validOrder('order-2'));
+
+    const { body } = await peek().query({ limit: '1' }).expect(200);
+
+    expect(body.count).toBe(1);
+  });
+
+  it('reprocesses an order the consumer then accepts', async () => {
+    await deadLetter(validOrder('order-ok'));
+
+    const { body } = await request(app.getHttpServer())
+      .post('/dlq/reprocess/order-ok')
+      .expect(201);
+
+    expect(body).toEqual({
+      success: true,
+      message: 'Message order-ok sent back to main queue for reprocessing',
     });
 
-    it('answers 404 when no message carries the order', async () => {
-      rabbitmq.seed(makePaymentOrder({ orderId: 'order-1' }));
+    await waitUntil(
+      'the consumer has taken the order off the payments queue',
+      async () =>
+        (await messageCount(topology.dlq)) === 0 &&
+        (await messageCount(topology.queue)) === 0
+    );
+  });
 
-      await request(app.getHttpServer())
-        .post('/dlq/reprocess/order-404')
-        .expect(404);
+  it('dead letters a reprocessed order the consumer rejects again', async () => {
+    await deadLetter(rejectedOrder('order-rejected'));
 
-      expect(rabbitmq.published).toHaveLength(0);
-      expect(rabbitmq.orderIds).toEqual(['order-1']);
+    await request(app.getHttpServer())
+      .post('/dlq/reprocess/order-rejected')
+      .expect(201);
+
+    await waitUntil('the order comes back dead lettered', async () => {
+      const { body } = await peek();
+
+      return (
+        body.count === 1 && body.messages[0].deathInfo?.reason === 'rejected'
+      );
     });
   });
 
-  describe('POST /dlq/reprocess-all', () => {
-    it('drains the queue back into the main queue', async () => {
-      rabbitmq.seed(
-        makePaymentOrder({ orderId: 'order-1' }),
-        makePaymentOrder({ orderId: 'order-2' })
-      );
+  it('answers 404 when no message carries the order', async () => {
+    await deadLetter(validOrder('order-1'));
 
-      const response = await request(app.getHttpServer())
-        .post('/dlq/reprocess-all')
-        .expect(201);
+    await request(app.getHttpServer())
+      .post('/dlq/reprocess/order-404')
+      .expect(404);
 
-      expect(response.body).toEqual({
-        success: true,
-        processed: 2,
-        failed: 0,
-      });
-
-      expect(rabbitmq.published).toHaveLength(2);
-      expect(rabbitmq.dlq.queue).toHaveLength(0);
-    });
-
-    it('keeps the messages it cannot read', async () => {
-      rabbitmq.seed('not json', makePaymentOrder({ orderId: 'order-2' }));
-
-      const response = await request(app.getHttpServer())
-        .post('/dlq/reprocess-all')
-        .expect(201);
-
-      expect(response.body).toEqual({
-        success: true,
-        processed: 1,
-        failed: 1,
-      });
-
-      expect(rabbitmq.dlq.queue).toHaveLength(1);
-    });
+    expect(await messageCount(topology.dlq)).toBe(1);
   });
 
-  describe('DELETE /dlq/message/:orderId', () => {
-    it('drops the matching message without republishing it', async () => {
-      rabbitmq.seed(
-        makePaymentOrder({ orderId: 'order-1' }),
-        makePaymentOrder({ orderId: 'order-2' })
-      );
+  it('reprocesses every message on the queue', async () => {
+    await deadLetter(validOrder('order-1'), validOrder('order-2'));
 
-      const response = await request(app.getHttpServer())
-        .delete('/dlq/message/order-1')
-        .expect(200);
+    const { body } = await request(app.getHttpServer())
+      .post('/dlq/reprocess-all')
+      .expect(201);
 
-      expect(response.body).toEqual({
-        success: true,
-        message: 'Message with order-1 was successfully discard from DLQ',
-      });
+    expect(body).toEqual({ success: true, processed: 2, failed: 0 });
 
-      expect(rabbitmq.published).toHaveLength(0);
-      expect(rabbitmq.orderIds).toEqual(['order-2']);
-    });
-
-    it('answers 404 when no message carries the order', async () => {
-      rabbitmq.seed(makePaymentOrder({ orderId: 'order-1' }));
-
-      await request(app.getHttpServer())
-        .delete('/dlq/message/order-404')
-        .expect(404);
-
-      expect(rabbitmq.orderIds).toEqual(['order-1']);
-    });
+    await waitUntil(
+      'both orders are consumed off the payments queue',
+      async () =>
+        (await messageCount(topology.dlq)) === 0 &&
+        (await messageCount(topology.queue)) === 0
+    );
   });
 
-  describe('DELETE /dlq/purge', () => {
-    it('empties the dead letter queue', async () => {
-      rabbitmq.seed(
-        makePaymentOrder({ orderId: 'order-1' }),
-        makePaymentOrder({ orderId: 'order-2' })
-      );
+  it('discards a single message and leaves the rest', async () => {
+    await deadLetter(validOrder('order-1'), validOrder('order-2'));
 
-      const response = await request(app.getHttpServer())
-        .delete('/dlq/purge')
-        .expect(200);
+    const { body } = await request(app.getHttpServer())
+      .delete('/dlq/message/order-1')
+      .expect(200);
 
-      expect(response.body).toEqual({ success: true, purgedCount: 2 });
-      expect(rabbitmq.dlq.queue).toHaveLength(0);
+    expect(body).toEqual({
+      success: true,
+      message: 'Message with order-1 was successfully discard from DLQ',
     });
+
+    await waitUntil(
+      'only the untouched order is left',
+      async () => (await messageCount(topology.dlq)) === 1
+    );
+
+    const remaining = await peek().expect(200);
+
+    expect(remaining.body.messages[0].content.orderId).toBe('order-2');
+  });
+
+  it('answers 404 when discarding an order the queue does not hold', async () => {
+    await deadLetter(validOrder('order-1'));
+
+    await request(app.getHttpServer())
+      .delete('/dlq/message/order-404')
+      .expect(404);
+
+    expect(await messageCount(topology.dlq)).toBe(1);
+  });
+
+  it('purges the dead letter queue', async () => {
+    await deadLetter(validOrder('order-1'), validOrder('order-2'));
+
+    const { body } = await request(app.getHttpServer())
+      .delete('/dlq/purge')
+      .expect(200);
+
+    expect(body).toEqual({ success: true, purgedCount: 2 });
+
+    expect(await messageCount(topology.dlq)).toBe(0);
   });
 });
