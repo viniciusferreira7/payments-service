@@ -40,7 +40,7 @@ pnpm start:dev
 | `pnpm check:type` | `tsc --noEmit` |
 | `pnpm test:unit` | Unit lane — `*.spec.ts`, no infra |
 | `pnpm test:int` | Integration lane — `*.int-spec.ts`, real Postgres, faked broker |
-| `pnpm test:e2e` | E2E lane — `*.e2e-spec.ts`, full HTTP boot |
+| `pnpm test:e2e` | E2E lane — `*.e2e-spec.ts`, full HTTP boot against the shared broker |
 | `pnpm test:cov` | Unit lane with coverage |
 
 ## Layout
