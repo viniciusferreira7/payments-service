@@ -257,6 +257,8 @@ export class DlqController {
         message: `Message with ${orderId} was successfully discard from DLQ`,
       };
     } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+
       const errorDetails = getErrorDetails(error);
 
       this.logger.error(
