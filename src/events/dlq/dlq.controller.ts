@@ -167,4 +167,28 @@ export class DlqController {
       );
     }
   }
+
+  @Delete('/purge')
+  public async purge(): Promise<{ success: boolean; purgedCount: number }> {
+    try {
+      const count = await this.dlqService.purgeAll();
+
+      return {
+        success: true,
+        purgedCount: count,
+      };
+    } catch (error) {
+      const errorDetails = getErrorDetails(error);
+
+      this.logger.error(
+        `Failed to purge DLQ: ${errorDetails.message}`,
+        errorDetails.stack
+      );
+
+      throw new InternalServerErrorException(
+        errorDetails,
+        `Failed to purge DLQ`
+      );
+    }
+  }
 }
