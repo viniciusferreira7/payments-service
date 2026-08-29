@@ -32,3 +32,9 @@ export function makePaymentOrder<
     ...overrides,
   } as T;
 }
+
+export function makeRejectedPaymentOrder<
+  T extends PaymentOrderMessage = PaymentOrderMessage,
+>(overrides: Partial<T> = {}): T {
+  return makePaymentOrder<T>({ amount: 999, ...overrides } as Partial<T>);
+}
