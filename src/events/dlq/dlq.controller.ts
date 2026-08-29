@@ -1,5 +1,6 @@
 import {
   Controller,
+  Delete,
   Get,
   InternalServerErrorException,
   Logger,
@@ -131,6 +132,38 @@ export class DlqController {
       throw new InternalServerErrorException(
         errorDetails,
         `Failed to reprocess all messages`
+      );
+    }
+  }
+
+  @Delete('/message/:orderId')
+  public async discardMessage(
+    @Param('orderId') orderId: string
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      const messageFounded = await this.dlqService.discardMessage(orderId);
+
+      if (!messageFounded) {
+        this.logger.error(`Message with ${orderId} not found in DLQ`);
+
+        throw new NotFoundException(`Message with ${orderId} not found in DLQ`);
+      }
+
+      return {
+        success: messageFounded,
+        message: `Message with ${orderId} was successfully discard from DLQ`,
+      };
+    } catch (error) {
+      const errorDetails = getErrorDetails(error);
+
+      this.logger.error(
+        `Failed to discard message: ${errorDetails.message}`,
+        errorDetails.stack
+      );
+
+      throw new InternalServerErrorException(
+        errorDetails,
+        `Failed to discard message`
       );
     }
   }
