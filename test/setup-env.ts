@@ -19,7 +19,10 @@ const defaults: Record<string, string> = {
   DATABASE_NAME: 'payments_test',
   JWT_SECRET: 'test-secret',
   JWT_EXPIRES_IN: '1d',
-  RABBITMQ_URL: 'amqp://test:test@localhost:5672',
+  // `admin:admin` is what the shared `marketplace-rabbitmq` container runs
+  // with. A `test:test` default only looked safer: the broker refuses it, so
+  // every spec that touches RabbitMQ died on a 403 handshake.
+  RABBITMQ_URL: 'amqp://admin:admin@localhost:5672',
   RABBITMQ_QUEUE_PAYMENTS: 'payment_queue',
   RABBITMQ_EXCHANGE: 'payments',
   RABBITMQ_ROUTING_KEY_PAYMENT_ORDER: 'payment.order',
