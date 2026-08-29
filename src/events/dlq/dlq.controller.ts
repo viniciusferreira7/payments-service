@@ -96,7 +96,7 @@ export class DlqController {
 
       throw new InternalServerErrorException(
         errorDetails,
-        'Failed to get DLQ stats'
+        `Failed to reprocess message ${orderId}: ${errorDetails.message}`
       );
     }
   }
