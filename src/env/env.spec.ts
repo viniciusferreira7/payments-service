@@ -46,6 +46,27 @@ describe('envSchema', () => {
     expect(envSchema.parse(baseEnv).RABBITMQ_URL).toBe(baseEnv.RABBITMQ_URL);
   });
 
+  it('defaults the test broker url', () => {
+    expect(envSchema.parse(baseEnv).RABBITMQ_TEST_URL).toBe(
+      'amqp://test:test@localhost:5673'
+    );
+  });
+
+  it('accepts an explicit test broker url', () => {
+    const env = envSchema.parse({
+      ...baseEnv,
+      RABBITMQ_TEST_URL: 'amqp://test:test@broker:5674',
+    });
+
+    expect(env.RABBITMQ_TEST_URL).toBe('amqp://test:test@broker:5674');
+  });
+
+  it('rejects an invalid RABBITMQ_TEST_URL', () => {
+    expect(() =>
+      envSchema.parse({ ...baseEnv, RABBITMQ_TEST_URL: 'not-a-url' })
+    ).toThrow();
+  });
+
   it('rejects an invalid RABBITMQ_URL', () => {
     expect(() =>
       envSchema.parse({ ...baseEnv, RABBITMQ_URL: 'not-a-url' })

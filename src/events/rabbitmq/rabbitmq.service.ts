@@ -48,7 +48,7 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async connect(): Promise<boolean> {
-    const rabbitMqUrl = this.envService.get('RABBITMQ_URL');
+    const rabbitMqUrl = this.envService.rabbitmqUrl;
 
     try {
       if (!this.connection) {

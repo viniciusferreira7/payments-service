@@ -44,6 +44,7 @@ describe('RabbitmqService', () => {
     // is opened here — this stays a unit test with no broker.
     const envService = {
       get: vi.fn().mockReturnValue('amqp://test:test@localhost:5672'),
+      rabbitmqUrl: 'amqp://test:test@localhost:5672',
     };
 
     const module: TestingModule = await Test.createTestingModule({
