@@ -67,7 +67,7 @@ export class DlqController {
     }
   }
 
-  @Post('reprocess/:orderId')
+  @Post('/reprocess/:orderId')
   public async reprocessMessage(
     @Param('orderId') orderId: string
   ): Promise<{ success: boolean; message: string }> {
