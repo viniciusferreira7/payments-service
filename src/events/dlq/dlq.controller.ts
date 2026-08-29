@@ -3,6 +3,9 @@ import {
   Get,
   InternalServerErrorException,
   Logger,
+  NotFoundException,
+  Param,
+  Post,
   Query,
 } from '@nestjs/common';
 import { getErrorDetails } from '@/utils/error.util';
@@ -41,10 +44,9 @@ export class DlqController {
   ): Promise<{ count: number; messages: DLQMessage[] }> {
     try {
       const parsedLimit = limit ? parseInt(limit, 10) : 10;
+      const absLimit = Math.abs(parsedLimit);
 
-      const messages = await this.dlqService.peekMessages(
-        Math.abs(parsedLimit)
-      );
+      const messages = await this.dlqService.peekMessages(absLimit);
 
       return {
         count: messages.length,
@@ -55,6 +57,40 @@ export class DlqController {
 
       this.logger.error(
         `Failed to get DLQ messages: ${errorDetails.message}`,
+        errorDetails.stack
+      );
+
+      throw new InternalServerErrorException(
+        errorDetails,
+        'Failed to get DLQ stats'
+      );
+    }
+  }
+
+  @Post('reprocess/:orderId')
+  public async reprocessMessage(
+    @Param('orderId') orderId: string
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      const messageFounded = await this.dlqService.reprocessMessage(orderId);
+
+      if (!messageFounded) {
+        this.logger.error(`Message with ${orderId} not found in DLQ`);
+
+        throw new NotFoundException(`Message with ${orderId} not found in DLQ`);
+      }
+
+      return {
+        success: messageFounded,
+        message: `Message ${orderId} sent back to main queue for reprocessing`,
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+
+      const errorDetails = getErrorDetails(error);
+
+      this.logger.error(
+        `Failed to reprocess message ${orderId}: ${errorDetails.message}`,
         errorDetails.stack
       );
 
