@@ -1,37 +1,21 @@
 import type { INestApplication } from '@nestjs/common';
 import type { OpenAPIObject } from '@nestjs/swagger';
 import request from 'supertest';
+import {
+  componentSchema,
+  type HttpMethod,
+  operationsUnder,
+  readOpenApiDocument,
+  responseSchema,
+  responseStatuses,
+} from 'test/config/openapi';
 import { makeModuleRef, startApp } from 'test/factories/make-module-ref';
 import { SWAGGER_PATH, setupSwagger } from './swagger.config';
-
-interface JsonSchema {
-  $ref?: string;
-  type?: string;
-  items?: JsonSchema;
-  properties?: Record<string, JsonSchema>;
-  required?: string[];
-}
 
 describe('Swagger (e2e)', () => {
   let app: INestApplication;
 
   let document: OpenAPIObject;
-
-  function responseSchema(
-    path: string,
-    method: 'get' | 'post' | 'delete',
-    status: string
-  ): JsonSchema {
-    const response = document.paths[path][method]?.responses[status] as {
-      content?: Record<string, { schema?: JsonSchema }>;
-    };
-
-    return response?.content?.['application/json']?.schema ?? {};
-  }
-
-  function componentSchema(name: string): JsonSchema {
-    return (document.components?.schemas?.[name] ?? {}) as JsonSchema;
-  }
 
   beforeAll(async () => {
     const moduleRef = await makeModuleRef();
@@ -42,11 +26,7 @@ describe('Swagger (e2e)', () => {
       },
     });
 
-    const response = await request(app.getHttpServer())
-      .get(`/${SWAGGER_PATH}-json`)
-      .expect(200);
-
-    document = response.body;
+    document = await readOpenApiDocument(app);
   });
 
   afterAll(async () => {
@@ -83,10 +63,7 @@ describe('Swagger (e2e)', () => {
   });
 
   it('tags the routes so they group under the right heading', () => {
-    const dlqOperations = Object.entries(document.paths)
-      .filter(([path]) => path.startsWith('/dlq'))
-      .flatMap(([, item]) => [item.get, item.post, item.delete])
-      .filter((operation) => operation !== undefined);
+    const dlqOperations = operationsUnder(document, '/dlq');
 
     expect(dlqOperations).toHaveLength(6);
 
@@ -100,28 +77,30 @@ describe('Swagger (e2e)', () => {
   });
 
   it('documents the stats response shape', () => {
-    expect(responseSchema('/dlq/stats', 'get', '200').$ref).toBe(
+    expect(responseSchema(document, '/dlq/stats', 'get', '200').$ref).toBe(
       '#/components/schemas/DlqStatsResponseDto'
     );
 
     expect(
-      Object.keys(componentSchema('DlqStatsResponseDto').properties ?? {})
+      Object.keys(
+        componentSchema(document, 'DlqStatsResponseDto').properties ?? {}
+      )
     ).toEqual(['queueName', 'messageCount', 'consumerCount']);
   });
 
   it('documents the messages response shape', () => {
-    expect(responseSchema('/dlq/messages', 'get', '200').$ref).toBe(
+    expect(responseSchema(document, '/dlq/messages', 'get', '200').$ref).toBe(
       '#/components/schemas/DlqMessagesResponseDto'
     );
 
     expect(
-      componentSchema('DlqMessagesResponseDto').properties?.messages
+      componentSchema(document, 'DlqMessagesResponseDto').properties?.messages
     ).toMatchObject({
       type: 'array',
       items: { $ref: '#/components/schemas/DlqMessageDto' },
     });
 
-    const message = componentSchema('DlqMessageDto');
+    const message = componentSchema(document, 'DlqMessageDto');
 
     expect(message.properties?.content.$ref).toBe(
       '#/components/schemas/PaymentOrderMessageDto'
@@ -147,8 +126,8 @@ describe('Swagger (e2e)', () => {
   });
 
   it('documents the status codes each route answers with', () => {
-    const statusesFor = (path: string, method: 'get' | 'post' | 'delete') =>
-      Object.keys(document.paths[path][method]?.responses ?? {}).sort();
+    const statusesFor = (path: string, method: HttpMethod) =>
+      responseStatuses(document, path, method);
 
     expect(statusesFor('/dlq/stats', 'get')).toEqual(['200', '500']);
     expect(statusesFor('/dlq/messages', 'get')).toEqual(['200', '500']);

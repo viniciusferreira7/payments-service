@@ -1,5 +1,5 @@
 import type { INestApplication } from '@nestjs/common';
-import request from 'supertest';
+import { makeDlqClient } from 'test/events/dlq-client';
 import { FakeDlqRabbitmqService } from 'test/events/fake-dlq-rabbitmq-service';
 import { makeModuleRef, startApp } from 'test/factories/make-module-ref';
 import { makePaymentOrder } from 'test/factories/make-payment-order';
@@ -8,6 +8,7 @@ import { RabbitmqService } from '@/events/rabbitmq/rabbitmq.service';
 describe('DlqController (integration)', () => {
   let app: INestApplication;
   let rabbitmq: FakeDlqRabbitmqService;
+  let dlq: ReturnType<typeof makeDlqClient>;
 
   const DLQ_NAME = 'payment_queue.dlq';
 
@@ -19,6 +20,7 @@ describe('DlqController (integration)', () => {
     );
 
     app = await startApp(moduleRef);
+    dlq = makeDlqClient(app);
   });
 
   afterEach(async () => {
@@ -32,9 +34,7 @@ describe('DlqController (integration)', () => {
         makePaymentOrder({ orderId: 'order-2' })
       );
 
-      const response = await request(app.getHttpServer())
-        .get('/dlq/stats')
-        .expect(200);
+      const response = await dlq.stats().expect(200);
 
       expect(response.body).toEqual({
         queueName: DLQ_NAME,
@@ -44,9 +44,7 @@ describe('DlqController (integration)', () => {
     });
 
     it('reports an empty queue', async () => {
-      const response = await request(app.getHttpServer())
-        .get('/dlq/stats')
-        .expect(200);
+      const response = await dlq.stats().expect(200);
 
       expect(response.body.messageCount).toBe(0);
     });
@@ -59,9 +57,7 @@ describe('DlqController (integration)', () => {
         makePaymentOrder({ orderId: 'order-2' })
       );
 
-      const response = await request(app.getHttpServer())
-        .get('/dlq/messages')
-        .expect(200);
+      const response = await dlq.messages().expect(200);
 
       expect(response.body.count).toBe(2);
       expect(
@@ -79,10 +75,7 @@ describe('DlqController (integration)', () => {
         makePaymentOrder({ orderId: 'order-2' })
       );
 
-      const response = await request(app.getHttpServer())
-        .get('/dlq/messages')
-        .query({ limit: '1' })
-        .expect(200);
+      const response = await dlq.messages('1').expect(200);
 
       expect(response.body.count).toBe(1);
       expect(rabbitmq.orderIds).toEqual(['order-1', 'order-2']);
@@ -96,9 +89,7 @@ describe('DlqController (integration)', () => {
         makePaymentOrder({ orderId: 'order-2' })
       );
 
-      const response = await request(app.getHttpServer())
-        .post('/dlq/reprocess/order-2')
-        .expect(201);
+      const response = await dlq.reprocess('order-2').expect(201);
 
       expect(response.body).toEqual({
         success: true,
@@ -118,9 +109,7 @@ describe('DlqController (integration)', () => {
     it('answers 404 when no message carries the order', async () => {
       rabbitmq.seed(makePaymentOrder({ orderId: 'order-1' }));
 
-      await request(app.getHttpServer())
-        .post('/dlq/reprocess/order-404')
-        .expect(404);
+      await dlq.reprocess('order-404').expect(404);
 
       expect(rabbitmq.published).toHaveLength(0);
       expect(rabbitmq.orderIds).toEqual(['order-1']);
@@ -134,9 +123,7 @@ describe('DlqController (integration)', () => {
         makePaymentOrder({ orderId: 'order-2' })
       );
 
-      const response = await request(app.getHttpServer())
-        .post('/dlq/reprocess-all')
-        .expect(201);
+      const response = await dlq.reprocessAll().expect(201);
 
       expect(response.body).toEqual({
         success: true,
@@ -151,9 +138,7 @@ describe('DlqController (integration)', () => {
     it('keeps the messages it cannot read', async () => {
       rabbitmq.seed('not json', makePaymentOrder({ orderId: 'order-2' }));
 
-      const response = await request(app.getHttpServer())
-        .post('/dlq/reprocess-all')
-        .expect(201);
+      const response = await dlq.reprocessAll().expect(201);
 
       expect(response.body).toEqual({
         success: true,
@@ -172,9 +157,7 @@ describe('DlqController (integration)', () => {
         makePaymentOrder({ orderId: 'order-2' })
       );
 
-      const response = await request(app.getHttpServer())
-        .delete('/dlq/message/order-1')
-        .expect(200);
+      const response = await dlq.discard('order-1').expect(200);
 
       expect(response.body).toEqual({
         success: true,
@@ -188,9 +171,7 @@ describe('DlqController (integration)', () => {
     it('answers 404 when no message carries the order', async () => {
       rabbitmq.seed(makePaymentOrder({ orderId: 'order-1' }));
 
-      await request(app.getHttpServer())
-        .delete('/dlq/message/order-404')
-        .expect(404);
+      await dlq.discard('order-404').expect(404);
 
       expect(rabbitmq.orderIds).toEqual(['order-1']);
     });
@@ -203,9 +184,7 @@ describe('DlqController (integration)', () => {
         makePaymentOrder({ orderId: 'order-2' })
       );
 
-      const response = await request(app.getHttpServer())
-        .delete('/dlq/purge')
-        .expect(200);
+      const response = await dlq.purge().expect(200);
 
       expect(response.body).toEqual({ success: true, purgedCount: 2 });
       expect(rabbitmq.dlq.queue).toHaveLength(0);
