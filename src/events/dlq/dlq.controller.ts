@@ -100,4 +100,38 @@ export class DlqController {
       );
     }
   }
+
+  @Post('/reprocess-all')
+  public async reprocessAll(): Promise<{
+    success: boolean;
+    processed: number;
+    failed: number;
+  }> {
+    try {
+      const result = await this.dlqService.reprocessAll();
+
+      if (result.failed > result.processed) {
+        throw new InternalServerErrorException(
+          `More messages failed than processed`
+        );
+      }
+      return {
+        success: true,
+        failed: result.failed,
+        processed: result.processed,
+      };
+    } catch (error) {
+      const errorDetails = getErrorDetails(error);
+
+      this.logger.error(
+        `Failed to reprocess all messages: ${errorDetails.message}`,
+        errorDetails.stack
+      );
+
+      throw new InternalServerErrorException(
+        errorDetails,
+        `Failed to reprocess all messages`
+      );
+    }
+  }
 }
