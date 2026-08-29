@@ -22,8 +22,12 @@ const defaults: Record<string, string> = {
   // Port 5673 is the throwaway broker `docker-compose.yaml` publishes under
   // its `test` profile, never the shared `marketplace-rabbitmq` on 5672: the
   // e2e lane declares and deletes queues, which has no business happening on
-  // the broker the other services are consuming from.
+  // the broker the other services are consuming from. `NODE_ENV=test` makes
+  // `EnvService.rabbitmqUrl` read RABBITMQ_TEST_URL; RABBITMQ_URL is set to the
+  // same broker so a lane that somehow runs outside that mode still cannot
+  // reach the shared one.
   RABBITMQ_URL: 'amqp://test:test@localhost:5673',
+  RABBITMQ_TEST_URL: 'amqp://test:test@localhost:5673',
   RABBITMQ_QUEUE_PAYMENTS: 'payment_queue',
   RABBITMQ_EXCHANGE: 'payments',
   RABBITMQ_ROUTING_KEY_PAYMENT_ORDER: 'payment.order',

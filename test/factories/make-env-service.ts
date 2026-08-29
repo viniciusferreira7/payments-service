@@ -1,6 +1,7 @@
+import type { ConfigService } from '@nestjs/config';
 import type { Env } from '@/env/env';
 import { envSchema } from '@/env/env';
-import type { EnvService } from '@/env/env.service';
+import { EnvService } from '@/env/env.service';
 
 /**
  * An `EnvService` answering with the validated environment, with `overrides`
@@ -20,7 +21,12 @@ import type { EnvService } from '@/env/env.service';
 export function makeEnvService(overrides: Partial<Env> = {}): EnvService {
   const env: Env = { ...envSchema.parse(process.env), ...overrides };
 
-  return {
+  // A real `EnvService` over a stub `ConfigService`, so everything it derives
+  // from the environment — `rabbitmqUrl`, and whatever is added next — answers
+  // from these values rather than having to be re-stubbed here.
+  const configService = {
     get: <T extends keyof Env>(key: T) => env[key],
-  } as EnvService;
+  } as ConfigService<Env, true>;
+
+  return new EnvService(configService);
 }
