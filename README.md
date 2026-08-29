@@ -19,7 +19,7 @@ bound to the `payments` topic exchange.
 
 - Node 24+
 - pnpm 11+
-- Docker (PostgreSQL) and a reachable RabbitMQ broker
+- Docker (PostgreSQL, and the test broker for the e2e lane) and a reachable RabbitMQ broker
 
 ## Setup
 
@@ -28,6 +28,14 @@ cp .env.example .env
 docker compose up -d
 pnpm install
 pnpm start:dev
+```
+
+The e2e lane needs its own broker — a throwaway one, so declaring and purging
+queues never touches the shared `marketplace-rabbitmq` the other services
+consume from. It sits behind the `test` profile, on 5673:
+
+```bash
+docker compose --profile test up -d
 ```
 
 ## Scripts
@@ -40,7 +48,7 @@ pnpm start:dev
 | `pnpm check:type` | `tsc --noEmit` |
 | `pnpm test:unit` | Unit lane — `*.spec.ts`, no infra |
 | `pnpm test:int` | Integration lane — `*.int-spec.ts`, real Postgres, faked broker |
-| `pnpm test:e2e` | E2E lane — `*.e2e-spec.ts`, full HTTP boot against the shared broker |
+| `pnpm test:e2e` | E2E lane — `*.e2e-spec.ts`, full HTTP boot against the test broker |
 | `pnpm test:cov` | Unit lane with coverage |
 
 ## Layout

@@ -19,6 +19,25 @@ services:
     volumes:
       - payments_service_pg_data:/var/lib/postgresql/data
 
+  payments-service-rabbitmq-test:
+    container_name: payments-service-rabbitmq-test
+    image: rabbitmq:4.3.4-management-alpine
+    profiles:
+      - test
+    ports:
+      - ${RABBITMQ_TEST_PORT:-5673}:5672
+      - ${RABBITMQ_TEST_MANAGEMENT_PORT:-15673}:15672
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_TEST_USER:-test}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_TEST_PASSWORD:-test}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - payments-service-network
+
 networks:
   payments-service-network:
     driver: bridge

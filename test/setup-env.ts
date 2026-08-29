@@ -19,10 +19,11 @@ const defaults: Record<string, string> = {
   DATABASE_NAME: 'payments_test',
   JWT_SECRET: 'test-secret',
   JWT_EXPIRES_IN: '1d',
-  // `admin:admin` is what the shared `marketplace-rabbitmq` container runs
-  // with. A `test:test` default only looked safer: the broker refuses it, so
-  // every spec that touches RabbitMQ died on a 403 handshake.
-  RABBITMQ_URL: 'amqp://admin:admin@localhost:5672',
+  // Port 5673 is the throwaway broker `docker-compose.yaml` publishes under
+  // its `test` profile, never the shared `marketplace-rabbitmq` on 5672: the
+  // e2e lane declares and deletes queues, which has no business happening on
+  // the broker the other services are consuming from.
+  RABBITMQ_URL: 'amqp://test:test@localhost:5673',
   RABBITMQ_QUEUE_PAYMENTS: 'payment_queue',
   RABBITMQ_EXCHANGE: 'payments',
   RABBITMQ_ROUTING_KEY_PAYMENT_ORDER: 'payment.order',
