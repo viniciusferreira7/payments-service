@@ -9,11 +9,12 @@
 const defaults: Record<string, string> = {
   NODE_ENV: 'test',
   PORT: '3335',
-  // Port 5433 is what `docker-compose.yaml` publishes (`${DATABASE_PORT:-5433}`).
-  // Defaulting to 5432 here silently pointed the suite at whatever unrelated
-  // Postgres happened to own the default port.
-  DATABASE_URL: 'postgres://test:test@localhost:5433/payments_test',
-  DATABASE_PORT: '5433',
+  // Port 5434 is what `docker-compose.yaml` publishes for the test Postgres
+  // (`${DATABASE_TEST_PORT:-5434}`) — the dev one owns 5433. Defaulting to 5432
+  // here silently pointed the suite at whatever unrelated Postgres happened to
+  // own the default port.
+  DATABASE_URL: 'postgres://test:test@localhost:5434/payments_test',
+  DATABASE_PORT: '5434',
   DATABASE_USERNAME: 'test',
   DATABASE_PASSWORD: 'test',
   DATABASE_NAME: 'payments_test',

@@ -16,7 +16,7 @@
     "check": "biome check",
     "check:fix": "biome check --write",
     "check:type": "tsc --noEmit",
-    "test:infra": "./scripts/test-infra.sh",
+    "test:infra": "docker compose --profile test up -d --wait payments-service-postgresql-test payments-service-rabbitmq-test",
     "test:infra:down": "docker compose --profile test down",
     "test:unit": "vitest run",
     "test:int": "vitest run --config ./vitest.config.int.mts",

@@ -19,6 +19,29 @@ services:
     volumes:
       - payments_service_pg_data:/var/lib/postgresql/data
 
+  payments-service-postgresql-test:
+    container_name: payments-service-postgresql-test
+    image: postgres:17.2
+    profiles:
+      - test
+    ports:
+      - ${DATABASE_TEST_PORT:-5434}:5432
+    environment:
+      POSTGRES_USER: ${DATABASE_TEST_USERNAME:-test}
+      POSTGRES_PASSWORD: ${DATABASE_TEST_PASSWORD:-test}
+      POSTGRES_DB: ${DATABASE_TEST_NAME:-payments_test}
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${DATABASE_TEST_USERNAME:-test} -d ${DATABASE_TEST_NAME:-payments_test}",
+        ]
+      interval: 5s
+      timeout: 2s
+      retries: 20
+    networks:
+      - payments-service-network
+
   payments-service-rabbitmq-test:
     container_name: payments-service-rabbitmq-test
     image: rabbitmq:4.3.4-management-alpine
