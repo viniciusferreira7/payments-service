@@ -30,21 +30,21 @@ pnpm install
 pnpm start:dev
 ```
 
-The e2e lane needs its own broker — a throwaway one, so declaring and purging
+The test lanes get their own throwaway containers, so declaring and purging
 queues never touches the shared `marketplace-rabbitmq` the other services
-consume from. It sits behind the `test` profile, on 5673.
+consume from, and the suite never writes to the dev database. Both sit behind
+the `test` profile: Postgres on 5434 (already owning the `test` role and the
+`payments_test` database) and RabbitMQ on 5673.
 
-`pnpm test:e2e` boots that infrastructure itself, through `pnpm test:infra`:
+`pnpm test:e2e` brings them up itself, through `pnpm test:infra`:
 
 ```bash
 pnpm test:infra
 ```
 
-It brings up Postgres and the test broker (`docker compose --profile test up -d
---wait`, so it returns only once both are healthy) and then creates the `test`
-role and the `payments_test` database the lanes connect to, if they are missing.
-Both steps are idempotent — running it against live containers is a no-op.
-`pnpm test:infra:down` stops everything again.
+That is `docker compose --profile test up -d --wait` scoped to the two test
+containers, so it returns only once both are healthy and is a no-op against
+containers already running. `pnpm test:infra:down` stops everything again.
 
 ## Scripts
 
@@ -54,7 +54,7 @@ Both steps are idempotent — running it against live containers is a no-op.
 | `pnpm build` | Compile to `dist/` |
 | `pnpm check` / `pnpm check:fix` | Biome lint + format |
 | `pnpm check:type` | `tsc --noEmit` |
-| `pnpm test:infra` | Boots Postgres + the test broker and seeds the test role/database |
+| `pnpm test:infra` | Boots the test Postgres + test broker and waits for both to be healthy |
 | `pnpm test:infra:down` | Stops the test infrastructure |
 | `pnpm test:unit` | Unit lane — `*.spec.ts`, no infra |
 | `pnpm test:int` | Integration lane — `*.int-spec.ts`, real Postgres, faked broker |
@@ -73,8 +73,6 @@ src/
     rabbitmq/              Connection, channel, publish and subscribe primitives
     payment-queue/         Consumer for `payment.order`
   auth/  common/  health/  payments/  services/  utils/
-scripts/
-  test-infra.sh            Boots and seeds the infrastructure the test lanes need
 test/
   setup-env.ts             Env defaults for the int/e2e lanes
   factories/               DI container and HTTP app builders
