@@ -11,6 +11,16 @@ import { waitForConnection } from '@/utils/wait-for-connection';
 import type { PublicMessageParams } from '../interfaces/public-message.interface';
 import type { SubscribeToQueue } from '../interfaces/subscribe-to-queue.interface';
 
+type AssertRetryParams = Pick<
+  SubscribeToQueue,
+  'queueName' | 'exchange' | 'routingKey' | 'options'
+>;
+
+type AssertDlqParams = Pick<
+  SubscribeToQueue,
+  'queueName' | 'exchange' | 'routingKey'
+>;
+
 @Injectable()
 export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(RabbitmqService.name);
@@ -101,6 +111,76 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private async assertRetry({
+    queueName,
+    exchange,
+    routingKey,
+    options = { maxRetries: 3, retryDelayMs: 30_000 },
+  }: AssertRetryParams): Promise<{
+    retryQueueName: string;
+    retryExchangeName: string;
+  }> {
+    const retryExchangeName = `${exchange}.retry.dlx`;
+    await this.channel.assertExchange(retryExchangeName, 'topic', {
+      durable: true,
+    });
+
+    const retryQueueName = `${queueName}.retry`;
+
+    await this.channel.assertQueue(retryQueueName, {
+      durable: true,
+      arguments: {
+        'x-message-ttl': options?.maxRetries ?? 3,
+        'x-dead-letter-exchange': exchange,
+        'x-dead-letter-routing-key': routingKey,
+      },
+    });
+
+    await this.channel.bindQueue(
+      retryQueueName,
+      retryExchangeName,
+      `${routingKey}.retry`
+    );
+
+    return {
+      retryQueueName,
+      retryExchangeName,
+    };
+  }
+
+  private async assertDlq({
+    queueName,
+    exchange,
+    routingKey,
+  }: AssertDlqParams): Promise<{
+    dlqName: string;
+    dlxExchangeName: string;
+    routingKeyDlq: string;
+  }> {
+    const dlxExchangeName = `${exchange}.dlx`;
+    await this.channel.assertExchange(dlxExchangeName, 'topic', {
+      durable: true,
+    });
+
+    const dlqName = `${queueName}.dlq`;
+    await this.channel.assertQueue(dlqName, {
+      durable: true,
+      arguments: {
+        'x-message-tll': 604_800_000, // 7 days
+      },
+    });
+
+    const routingKeyDlq = `${routingKey}.dlq`;
+
+    await this.channel.bindQueue(dlqName, dlxExchangeName, routingKeyDlq);
+
+    return {
+      dlqName,
+      dlxExchangeName,
+      routingKeyDlq,
+    };
+  }
+
   public async publicMessage({
     exchange,
     routingKey,
@@ -150,6 +230,7 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
     exchange,
     routingKey,
     callback,
+    options = { maxRetries: 3, retryDelayMs: 30_000 },
   }: SubscribeToQueue): Promise<void> {
     try {
       if (!this.channel) {
@@ -158,30 +239,26 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
 
       await this.channel.assertExchange(exchange, 'topic', { durable: true });
 
-      const dlxExchangeName = `${exchange}.dlx`;
-      await this.channel.assertExchange(dlxExchangeName, 'topic', {
-        durable: true,
+      await this.assertRetry({
+        queueName,
+        exchange,
+        routingKey,
+        options,
       });
 
-      const dlqName = `${queueName}.dlq`;
-      await this.channel.assertQueue(dlqName, {
-        durable: true,
-        arguments: {
-          'x-message-tll': 604_800_000, // 7 days
-        },
+      const dlqInfo = await this.assertDlq({
+        queueName,
+        exchange,
+        routingKey,
       });
-
-      const routingKeyDlq = `${routingKey}.dlq`;
-
-      await this.channel.bindQueue(dlqName, dlxExchangeName, routingKeyDlq);
 
       const queue = await this.channel.assertQueue(queueName, {
         durable: true,
         arguments: {
           'x-message-ttl': 86_400_000, // 24 hours
           'x-max-length': 10_000, // 10 thousand seconds
-          'x-dead-letter-exchange': dlxExchangeName,
-          'x-dead-letter-routing-key': routingKeyDlq,
+          'x-dead-letter-exchange': dlqInfo.dlxExchangeName,
+          'x-dead-letter-routing-key': dlqInfo.routingKeyDlq,
         },
       });
 
@@ -215,7 +292,7 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
           );
 
           this.channel.nack(msm, false, false);
-          this.logger.warn(`This message sent to DLQ: ${dlqName}`);
+          this.logger.warn(`This message sent to DLQ: ${dlqInfo.dlqName}`);
         }
       });
 
