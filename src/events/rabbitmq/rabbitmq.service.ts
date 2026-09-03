@@ -119,6 +119,7 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
   }: AssertRetryParams): Promise<{
     retryQueueName: string;
     retryExchangeName: string;
+    retryRoutingKey: string;
   }> {
     const retryExchangeName = `${exchange}.retry.dlx`;
     await this.channel.assertExchange(retryExchangeName, 'topic', {
@@ -130,21 +131,24 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
     await this.channel.assertQueue(retryQueueName, {
       durable: true,
       arguments: {
-        'x-message-ttl': options?.maxRetries ?? 3,
+        'x-message-ttl': options?.retryDelayMs ?? 30_000,
         'x-dead-letter-exchange': exchange,
         'x-dead-letter-routing-key': routingKey,
       },
     });
 
+    const retryRoutingKey = `${routingKey}.retry`;
+
     await this.channel.bindQueue(
       retryQueueName,
       retryExchangeName,
-      `${routingKey}.retry`
+      retryRoutingKey
     );
 
     return {
       retryQueueName,
       retryExchangeName,
+      retryRoutingKey,
     };
   }
 
@@ -179,6 +183,20 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
       dlxExchangeName,
       routingKeyDlq,
     };
+  }
+
+  private getRetryCount(msg: amqp.ConsumeMessage): number {
+    const xDeath = msg?.properties?.headers?.['x-death'] as
+      | Array<{ count: number; queue: string }>
+      | undefined;
+
+    if (!xDeath || xDeath.length === 0) return 0;
+
+    const count = xDeath
+      .filter((death) => !death.queue.endsWith('.retry'))
+      .reduce((acc, death) => acc + (death.count || 0), 0);
+
+    return count;
   }
 
   public async publicMessage({
@@ -232,6 +250,9 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
     callback,
     options = { maxRetries: 3, retryDelayMs: 30_000 },
   }: SubscribeToQueue): Promise<void> {
+    const maxRetries = options.maxRetries ?? 3;
+    const retryDelayMs = options.retryDelayMs ?? 30_000; // 30 seconds
+
     try {
       if (!this.channel) {
         throw new Error('RabbitMQ channel not available');
@@ -239,11 +260,11 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
 
       await this.channel.assertExchange(exchange, 'topic', { durable: true });
 
-      await this.assertRetry({
+      const retryInfo = await this.assertRetry({
         queueName,
         exchange,
         routingKey,
-        options,
+        options: { maxRetries, retryDelayMs },
       });
 
       const dlqInfo = await this.assertDlq({
@@ -257,8 +278,8 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
         arguments: {
           'x-message-ttl': 86_400_000, // 24 hours
           'x-max-length': 10_000, // 10 thousand seconds
-          'x-dead-letter-exchange': dlqInfo.dlxExchangeName,
-          'x-dead-letter-routing-key': dlqInfo.routingKeyDlq,
+          'x-dead-letter-exchange': retryInfo.retryExchangeName,
+          'x-dead-letter-routing-key': retryInfo.retryRoutingKey,
         },
       });
 
@@ -266,39 +287,66 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
 
       await this.channel.prefetch(1);
 
-      await this.channel.consume(queue.queue, async (msm) => {
-        if (!msm) {
+      await this.channel.consume(queue.queue, async (msg) => {
+        if (!msg) {
           this.logger.warn(`Consumer for queue ${queueName} was cancelled`);
           return;
         }
 
+        const retryCount = this.getRetryCount(msg);
+
+        this.logger.log(
+          `Message received (attempt ${retryCount + 1}/${maxRetries ?? 3})`
+        );
+
         try {
-          const payload = JSON.parse(msm.content.toString('utf-8'));
+          const payload = JSON.parse(msg.content.toString('utf-8'));
 
           this.logger.log(`Message received from queue: ${queueName}`);
           this.logger.debug(`Message content: ${JSON.stringify(payload)}`);
 
           await callback(payload);
 
-          this.channel.ack(msm);
+          this.channel.ack(msg);
           this.logger.log(
             `Message processed successfully from queue: ${queueName}`
           );
         } catch (error) {
+          if (retryCount < maxRetries) {
+            this.logger.warn(
+              `Processing failed (attempt ${retryCount + 1}/${maxRetries + 1})` +
+                `Retrying in ${retryDelayMs / 1_000}s`
+            );
+
+            this.channel.nack(msg, false, false);
+          } else {
+            this.logger.error(
+              `Max retries (${maxRetries}) exceeded. Sending to DLQ.`
+            );
+
+            this.channel.publish(
+              dlqInfo.dlxExchangeName,
+              dlqInfo.routingKeyDlq,
+              msg.content,
+              { persistent: true, headers: msg.properties.headers }
+            );
+
+            this.channel.ack(msg);
+          }
+
           const errorDetails = getErrorDetails(error);
           this.logger.error(
             `Error to processing message: ${errorDetails.message}`,
             errorDetails.stack
           );
-
-          this.channel.nack(msm, false, false);
-          this.logger.warn(`This message sent to DLQ: ${dlqInfo.dlqName}`);
         }
       });
 
       this.logger.log(
-        `Subscribed to queue: ${queueName} with routing key: ${routingKey}`
+        `Retry queue: ${retryInfo.retryQueueName} (${retryDelayMs}ms delay)`
       );
+      this.logger.log(`Subscribed to queue: ${queueName}`);
+      this.logger.log(`Dead letter queue: ${dlqInfo.dlqName}`);
     } catch (error) {
       const errorDetails = getErrorDetails(error);
 
