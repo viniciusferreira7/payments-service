@@ -8,5 +8,5 @@ export interface SubscribeToQueue {
   exchange: string;
   routingKey: string;
   callback: (message: unknown) => Promise<void>;
-  options: SubscribeToQueueRetryOptions;
+  options?: SubscribeToQueueRetryOptions;
 }
