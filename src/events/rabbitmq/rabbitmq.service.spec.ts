@@ -1,6 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { EnvService } from '@/env/env.service';
+import { metrics } from '@/observability/metrics';
 import type { SubscribeToQueueRetryOptions } from '../interfaces/subscribe-to-queue.interface';
 import { RabbitmqService } from './rabbitmq.service';
 
@@ -666,6 +667,143 @@ describe('RabbitmqService', () => {
           )
         )
       ).resolves.toBeUndefined();
+    });
+  });
+
+  describe('metering a delivery', () => {
+    const subscription = {
+      queueName: 'payment_queue',
+      exchange: 'payments',
+      routingKey: 'payment.order',
+    };
+
+    let channel: ReturnType<typeof makeChannel>;
+    let callback: ReturnType<typeof makeCallback>;
+    let consumed: ReturnType<typeof vi.spyOn>;
+    let inFlight: ReturnType<typeof vi.spyOn>;
+    let attempt: ReturnType<typeof vi.spyOn>;
+
+    async function getConsumer() {
+      await service.subscribeToQueue({
+        ...subscription,
+        callback,
+        options: {},
+      });
+
+      return channel.consume.mock.calls[0][1] as (
+        message: ReturnType<typeof makeMessage> | null
+      ) => Promise<void>;
+    }
+
+    beforeEach(() => {
+      vi.spyOn(Logger.prototype, 'log').mockImplementation(silence);
+      vi.spyOn(Logger.prototype, 'debug').mockImplementation(silence);
+      vi.spyOn(Logger.prototype, 'warn').mockImplementation(silence);
+      vi.spyOn(Logger.prototype, 'error').mockImplementation(silence);
+
+      // The instruments are OpenTelemetry no-ops until a meter provider is
+      // registered, which never happens under NODE_ENV=test — spying on them
+      // is enough to assert what the service reports.
+      consumed = vi.spyOn(metrics.payment_orders_consumed, 'add');
+      inFlight = vi.spyOn(metrics.payment_orders_in_flight, 'add');
+      attempt = vi.spyOn(metrics.payment_order_delivery_attempt, 'record');
+
+      channel = makeChannel();
+      callback = makeCallback();
+      callback.mockResolvedValue(undefined);
+      Reflect.set(service, 'channel', channel);
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('counts a processed message once, by outcome', async () => {
+      const consumer = await getConsumer();
+
+      await consumer(makeMessage({ orderId: 'order-1' }));
+
+      expect(consumed).toHaveBeenCalledTimes(1);
+      expect(consumed).toHaveBeenCalledWith(1, {
+        queue: 'payment_queue',
+        outcome: 'processed',
+      });
+    });
+
+    it('counts a retried message by outcome', async () => {
+      callback.mockRejectedValue(new Error('gateway unavailable'));
+
+      const consumer = await getConsumer();
+
+      await consumer(makeMessage({ orderId: 'order-1' }));
+
+      expect(consumed).toHaveBeenCalledWith(1, {
+        queue: 'payment_queue',
+        outcome: 'retried',
+      });
+    });
+
+    it('counts a dead lettered message by outcome', async () => {
+      callback.mockRejectedValue(new Error('gateway unavailable'));
+
+      const consumer = await getConsumer();
+
+      await consumer(
+        makeMessage(
+          { orderId: 'order-1' },
+          xDeath([{ queue: 'payment_queue', count: 3 }])
+        )
+      );
+
+      expect(consumed).toHaveBeenCalledWith(1, {
+        queue: 'payment_queue',
+        outcome: 'dead_lettered',
+      });
+    });
+
+    it('carries no unbounded attribute into the counter', async () => {
+      callback.mockRejectedValue(new Error('order 3f9a-11 hit gateway 502'));
+
+      const consumer = await getConsumer();
+
+      await consumer(makeMessage({ orderId: 'order-1' }));
+
+      // An error message or an id as an attribute mints a time series per
+      // distinct value; only closed sets belong here.
+      const [, attributes] = consumed.mock.calls[0];
+
+      expect(Object.keys(attributes as object).sort()).toEqual([
+        'outcome',
+        'queue',
+      ]);
+    });
+
+    it('records the attempt the delivery arrived on', async () => {
+      const consumer = await getConsumer();
+
+      await consumer(
+        makeMessage(
+          { orderId: 'order-1' },
+          xDeath([{ queue: 'payment_queue', count: 2 }])
+        )
+      );
+
+      expect(attempt).toHaveBeenCalledWith(3, { queue: 'payment_queue' });
+    });
+
+    it('returns the in flight gauge to zero on every path', async () => {
+      const consumer = await getConsumer();
+
+      await consumer(makeMessage({ orderId: 'order-1' }));
+      callback.mockRejectedValue(new Error('boom'));
+      await consumer(makeMessage({ orderId: 'order-2' }));
+
+      const net = inFlight.mock.calls.reduce(
+        (total, [delta]) => total + (delta as number),
+        0
+      );
+
+      expect(net).toBe(0);
     });
   });
 

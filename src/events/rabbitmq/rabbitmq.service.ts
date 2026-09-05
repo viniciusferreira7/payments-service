@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import * as amqp from 'amqplib';
 import { EnvService } from '@/env/env.service';
+import { metrics } from '@/observability/metrics';
 import { getErrorDetails } from '@/utils/error.util';
 import { waitForConnection } from '@/utils/wait-for-connection';
 import type { PublicMessageParams } from '../interfaces/public-message.interface';
@@ -67,6 +68,7 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
       }
     } catch (error) {
       const errorDetails = getErrorDetails(error);
+      metrics.broker_connection_attempts.add(1, { outcome: 'refused' });
       this.logger.error(
         `Failed to connect on RabbiMQ: ${errorDetails.message}`,
         errorDetails.stack
@@ -78,10 +80,12 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
     try {
       this.channel = await this.connection.createChannel();
       this.logger.log('Created on RabbitmQ successfully');
+      metrics.broker_connection_attempts.add(1, { outcome: 'connected' });
 
       return true;
     } catch (error) {
       const errorDetails = getErrorDetails(error);
+      metrics.broker_connection_attempts.add(1, { outcome: 'no_channel' });
 
       this.logger.error(
         `Failed to create channel on RabbitMQ: ${errorDetails.message}`,
@@ -185,6 +189,25 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  /**
+   * Records how one delivery ended. `outcome` is the message's fate, not the
+   * callback's: a failure that still has retries left settles as `retried`.
+   * Attributes stay a closed set — an error message here would mint a time
+   * series per distinct text.
+   */
+  private settle(
+    queue: string,
+    outcome: 'processed' | 'retried' | 'dead_lettered',
+    startedAt: number
+  ): void {
+    metrics.payment_orders_consumed.add(1, { queue, outcome });
+    metrics.payment_order_processing_duration.record(Date.now() - startedAt, {
+      queue,
+      outcome,
+    });
+    metrics.payment_orders_in_flight.add(-1, { queue });
+  }
+
   private getRetryCount(msg: amqp.ConsumeMessage): number {
     const xDeath = msg?.properties?.headers?.['x-death'] as
       | Array<{ count: number; queue: string }>
@@ -206,6 +229,10 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
   }: PublicMessageParams): Promise<void> {
     try {
       if (!this.channel) {
+        metrics.broker_publish_failures.add(1, {
+          exchange,
+          reason: 'no_channel',
+        });
         this.logger.warn(
           'RabbiMq channel not available, skipping message publish'
         );
@@ -227,8 +254,14 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
         }
       );
 
-      if (!publishedMessage)
+      if (!publishedMessage) {
+        metrics.broker_publish_failures.add(1, {
+          exchange,
+          reason: 'write_buffer_full',
+        });
+
         throw new Error('Failed to publish message to RabbiMQ');
+      }
 
       this.logger.log(
         `Message was published to [EXCHANGE]: ${exchange} - [ROUTING KEY]: ${routingKey}`
@@ -236,6 +269,12 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
       this.logger.debug(`Message content: ${JSON.stringify(message)}`);
     } catch (error) {
       const errorDetails = getErrorDetails(error);
+
+      // A full write buffer already counted itself with its own reason.
+      if (errorDetails.message !== 'Failed to publish message to RabbiMQ') {
+        metrics.broker_publish_failures.add(1, { exchange, reason: 'error' });
+      }
+
       this.logger.error(
         `Error publishing message to RabbitMQ: ${errorDetails.message}`,
         errorDetails.stack
@@ -294,6 +333,12 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
         }
 
         const retryCount = this.getRetryCount(msg);
+        const startedAt = Date.now();
+
+        metrics.payment_order_delivery_attempt.record(retryCount + 1, {
+          queue: queueName,
+        });
+        metrics.payment_orders_in_flight.add(1, { queue: queueName });
 
         this.logger.log(
           `Message received (attempt ${retryCount + 1}/${maxRetries + 1})`
@@ -308,6 +353,7 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
           await callback(payload);
 
           this.channel.ack(msg);
+          this.settle(queueName, 'processed', startedAt);
           this.logger.log(
             `Message processed successfully from queue: ${queueName}`
           );
@@ -319,6 +365,7 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
             );
 
             this.channel.nack(msg, false, false);
+            this.settle(queueName, 'retried', startedAt);
           } else {
             this.logger.error(
               `Max retries (${maxRetries}) exceeded. Sending to DLQ.`
@@ -332,6 +379,7 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
             );
 
             this.channel.ack(msg);
+            this.settle(queueName, 'dead_lettered', startedAt);
           }
 
           const errorDetails = getErrorDetails(error);
