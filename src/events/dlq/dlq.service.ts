@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { Channel, GetMessage } from 'amqplib';
 import { EnvService } from '@/env/env.service';
+import { metrics } from '@/observability/metrics';
 import { getErrorDetails } from '@/utils/error.util';
 import type { PaymentOrderMessage } from '../interfaces/payments-queue.interface';
 import { RabbitmqService } from '../rabbitmq/rabbitmq.service';
@@ -46,6 +47,8 @@ export class DlqService {
     const channel = await this.getChannel();
 
     const queueInfo = await channel.checkQueue(this.DLQ_NAME);
+
+    metrics.dlq_depth.record(queueInfo.messageCount, { queue: this.DLQ_NAME });
 
     return {
       queueName: this.DLQ_NAME,
@@ -158,6 +161,10 @@ export class DlqService {
             });
 
             channel.ack(message);
+            metrics.dlq_operations.add(1, {
+              action: 'reprocess',
+              outcome: 'succeeded',
+            });
             break;
           }
 
@@ -210,10 +217,18 @@ export class DlqService {
 
           channel.ack(message);
           processed++;
+          metrics.dlq_operations.add(1, {
+            action: 'reprocess',
+            outcome: 'succeeded',
+          });
         } catch (error) {
           const errorDetails = getErrorDetails(error);
 
           rejected.push(message);
+          metrics.dlq_operations.add(1, {
+            action: 'reprocess',
+            outcome: 'failed',
+          });
 
           this.logger.error(
             `Failed to process DLQ message: ${errorDetails.message}`,
@@ -251,6 +266,10 @@ export class DlqService {
           if (content?.orderId === orderId) {
             channel.ack(message);
             found = true;
+            metrics.dlq_operations.add(1, {
+              action: 'discard',
+              outcome: 'succeeded',
+            });
             this.logger.warn(`Message ${orderId} discarded from DLQ`);
             break;
           }
@@ -278,6 +297,9 @@ export class DlqService {
     const channel = await this.getChannel();
 
     const result = await channel.purgeQueue(this.DLQ_NAME);
+
+    metrics.dlq_operations.add(1, { action: 'purge', outcome: 'succeeded' });
+    metrics.dlq_depth.record(0, { queue: this.DLQ_NAME });
 
     this.logger.warn(`Purged ${result.messageCount} messages from DLQ`);
 
