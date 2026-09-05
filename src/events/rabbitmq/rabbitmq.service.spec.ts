@@ -1,6 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { EnvService } from '@/env/env.service';
+import type { SubscribeToQueueRetryOptions } from '../interfaces/subscribe-to-queue.interface';
 import { RabbitmqService } from './rabbitmq.service';
 
 // `amqplib` is an ESM namespace here, so `vi.spyOn` cannot redefine `connect`.
@@ -31,8 +32,19 @@ function makeCallback() {
 }
 
 /** An AMQP delivery carrying `payload` as its JSON body. */
-function makeMessage(payload: unknown) {
-  return { content: Buffer.from(JSON.stringify(payload)) };
+function makeMessage(payload: unknown, headers: Record<string, unknown> = {}) {
+  return {
+    content: Buffer.from(JSON.stringify(payload)),
+    properties: { headers },
+  };
+}
+
+/**
+ * The `x-death` header the broker stamps on a message. One entry per queue the
+ * message died in, `count` being how many times it died there.
+ */
+function xDeath(entries: Array<{ queue: string; count?: number }>) {
+  return { 'x-death': entries };
 }
 
 describe('RabbitmqService', () => {
@@ -236,28 +248,79 @@ describe('RabbitmqService', () => {
       );
     });
 
-    it('points the main queue at the dead letter exchange', async () => {
+    it('declares a retry exchange alongside the main one', async () => {
       await service.subscribeToQueue({ ...subscription, callback });
 
+      expect(channel.assertExchange).toHaveBeenCalledWith(
+        'payments.retry.dlx',
+        'topic',
+        { durable: true }
+      );
+    });
+
+    it('parks retried messages in a TTL queue that expires back to the main exchange', async () => {
+      await service.subscribeToQueue({ ...subscription, callback });
+
+      // The retry queue has no consumer: the delay is the TTL, and expiry is
+      // what dead-letters the message back onto the main exchange.
+      expect(channel.assertQueue).toHaveBeenCalledWith('payment_queue.retry', {
+        durable: true,
+        arguments: {
+          'x-message-ttl': 30_000,
+          'x-dead-letter-exchange': 'payments',
+          'x-dead-letter-routing-key': 'payment.order',
+        },
+      });
+      expect(channel.bindQueue).toHaveBeenCalledWith(
+        'payment_queue.retry',
+        'payments.retry.dlx',
+        'payment.order.retry'
+      );
+    });
+
+    it('uses the configured retry delay as the retry queue TTL', async () => {
+      await service.subscribeToQueue({
+        ...subscription,
+        callback,
+        options: { maxRetries: 5, retryDelayMs: 5_000 },
+      });
+
+      expect(channel.assertQueue).toHaveBeenCalledWith(
+        'payment_queue.retry',
+        expect.objectContaining({
+          arguments: expect.objectContaining({ 'x-message-ttl': 5_000 }),
+        })
+      );
+    });
+
+    it('points the main queue at the retry exchange', async () => {
+      await service.subscribeToQueue({ ...subscription, callback });
+
+      // A nack on the main queue must land on the retry side, not the DLQ —
+      // the DLQ is reached explicitly, once the retries are spent.
       expect(channel.assertQueue).toHaveBeenCalledWith('payment_queue', {
         durable: true,
         arguments: {
           'x-message-ttl': 86_400_000,
           'x-max-length': 10_000,
-          'x-dead-letter-exchange': 'payments.dlx',
-          'x-dead-letter-routing-key': 'payment.order.dlq',
+          'x-dead-letter-exchange': 'payments.retry.dlx',
+          'x-dead-letter-routing-key': 'payment.order.retry',
         },
       });
     });
 
-    it('declares the dead letter queue before the queue that routes to it', async () => {
+    it('declares the retry and dead letter queues before the queue that routes to them', async () => {
       await service.subscribeToQueue({ ...subscription, callback });
 
       const declared = channel.assertQueue.mock.calls.map(([name]) => name);
 
-      // Publishing to a missing DLX/DLQ silently drops the message, so the
-      // dead letter side has to exist before the main queue can name it.
-      expect(declared).toEqual(['payment_queue.dlq', 'payment_queue']);
+      // Publishing to a missing exchange/queue silently drops the message, so
+      // both sides have to exist before the main queue can name them.
+      expect(declared).toEqual([
+        'payment_queue.retry',
+        'payment_queue.dlq',
+        'payment_queue',
+      ]);
     });
 
     it('binds the main queue to its routing key and consumes one at a time', async () => {
@@ -332,7 +395,7 @@ describe('RabbitmqService', () => {
       expect(channel.nack).not.toHaveBeenCalled();
     });
 
-    it('sends a message to the DLQ when the callback rejects', async () => {
+    it('nacks a message the callback rejected onto the retry path', async () => {
       const failure = new Error('Invalid payment message received');
       callback.mockRejectedValue(failure);
 
@@ -341,20 +404,22 @@ describe('RabbitmqService', () => {
 
       await consumer(message);
 
-      // `requeue: false` is what routes the message to the DLQ; requeueing it
-      // would loop the same poison message forever.
+      // `requeue: false` is what hands the message to the queue's dead letter
+      // exchange — here the retry exchange; requeueing it would spin the same
+      // failing message with no delay.
       expect(channel.nack).toHaveBeenCalledWith(message, false, false);
       expect(channel.ack).not.toHaveBeenCalled();
+      expect(channel.publish).not.toHaveBeenCalled();
       expect(error).toHaveBeenCalledWith(
         `Error to processing message: ${failure.message}`,
         failure.stack
       );
       expect(warn).toHaveBeenCalledWith(
-        'This message sent to DLQ: payment_queue.dlq'
+        'Processing failed (attempt 1/4)Retrying in 30s'
       );
     });
 
-    it('sends a malformed payload to the DLQ without calling the callback', async () => {
+    it('sends a malformed payload down the retry path without calling the callback', async () => {
       const consumer = await getConsumer();
       const message = { content: Buffer.from('not json') };
 
@@ -384,6 +449,223 @@ describe('RabbitmqService', () => {
       expect(callback).not.toHaveBeenCalled();
       expect(channel.ack).not.toHaveBeenCalled();
       expect(channel.nack).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('retrying and exhausting a failed message', () => {
+    const subscription = {
+      queueName: 'payment_queue',
+      exchange: 'payments',
+      routingKey: 'payment.order',
+    };
+
+    let channel: ReturnType<typeof makeChannel>;
+    let callback: ReturnType<typeof makeCallback>;
+    let log: ReturnType<typeof vi.spyOn>;
+    let warn: ReturnType<typeof vi.spyOn>;
+    let error: ReturnType<typeof vi.spyOn>;
+
+    /** Returns the consumer the service handed to `channel.consume`. */
+    async function getConsumer(options: SubscribeToQueueRetryOptions = {}) {
+      await service.subscribeToQueue({ ...subscription, callback, options });
+
+      return channel.consume.mock.calls[0][1] as (
+        message: ReturnType<typeof makeMessage> | null
+      ) => Promise<void>;
+    }
+
+    beforeEach(() => {
+      log = vi.spyOn(Logger.prototype, 'log').mockImplementation(silence);
+      vi.spyOn(Logger.prototype, 'debug').mockImplementation(silence);
+      warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(silence);
+      error = vi.spyOn(Logger.prototype, 'error').mockImplementation(silence);
+
+      channel = makeChannel();
+      callback = makeCallback();
+      // Every message in this block fails: what is under test is where it goes.
+      callback.mockRejectedValue(new Error('gateway unavailable'));
+      Reflect.set(service, 'channel', channel);
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('counts a delivery with no x-death header as the first attempt', async () => {
+      const consumer = await getConsumer();
+
+      await consumer(makeMessage({ orderId: 'order-1' }));
+
+      expect(log).toHaveBeenCalledWith('Message received (attempt 1/3)');
+      expect(channel.nack).toHaveBeenCalled();
+    });
+
+    it('counts an empty x-death header as the first attempt', async () => {
+      const consumer = await getConsumer();
+
+      await consumer(makeMessage({ orderId: 'order-1' }, xDeath([])));
+
+      expect(log).toHaveBeenCalledWith('Message received (attempt 1/3)');
+    });
+
+    it('counts the deaths the main queue recorded', async () => {
+      const consumer = await getConsumer();
+
+      await consumer(
+        makeMessage(
+          { orderId: 'order-1' },
+          xDeath([{ queue: 'payment_queue', count: 2 }])
+        )
+      );
+
+      expect(log).toHaveBeenCalledWith('Message received (attempt 3/3)');
+      expect(warn).toHaveBeenCalledWith(
+        'Processing failed (attempt 3/4)Retrying in 30s'
+      );
+      expect(channel.nack).toHaveBeenCalled();
+    });
+
+    it('ignores the deaths the retry queue recorded', async () => {
+      const consumer = await getConsumer();
+
+      // A round trip stamps two entries: one for the main queue (the nack) and
+      // one for the retry queue (the TTL expiry). Only the first is an attempt
+      // — counting both would burn the budget twice as fast.
+      await consumer(
+        makeMessage(
+          { orderId: 'order-1' },
+          xDeath([
+            { queue: 'payment_queue', count: 1 },
+            { queue: 'payment_queue.retry', count: 1 },
+          ])
+        )
+      );
+
+      expect(log).toHaveBeenCalledWith('Message received (attempt 2/3)');
+      expect(channel.nack).toHaveBeenCalled();
+      expect(channel.publish).not.toHaveBeenCalled();
+    });
+
+    it('tolerates a death entry with no count', async () => {
+      const consumer = await getConsumer();
+
+      await consumer(
+        makeMessage(
+          { orderId: 'order-1' },
+          xDeath([{ queue: 'payment_queue' }])
+        )
+      );
+
+      expect(log).toHaveBeenCalledWith('Message received (attempt 1/3)');
+    });
+
+    it('publishes to the dead letter exchange once the retries are spent', async () => {
+      const consumer = await getConsumer();
+      const message = makeMessage(
+        { orderId: 'order-1' },
+        xDeath([{ queue: 'payment_queue', count: 3 }])
+      );
+
+      await consumer(message);
+
+      // The DLQ is reached by an explicit publish, not by a nack: nacking here
+      // would send the message round the retry loop again.
+      expect(channel.publish).toHaveBeenCalledWith(
+        'payments.dlx',
+        'payment.order.dlq',
+        message.content,
+        { persistent: true, headers: message.properties.headers }
+      );
+      expect(channel.nack).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalledWith(
+        'Max retries (3) exceeded. Sending to DLQ.'
+      );
+    });
+
+    it('acks the message it parked in the DLQ', async () => {
+      const consumer = await getConsumer();
+      const message = makeMessage(
+        { orderId: 'order-1' },
+        xDeath([{ queue: 'payment_queue', count: 3 }])
+      );
+
+      await consumer(message);
+
+      // Without the ack the message stays unacked on the main queue and comes
+      // back on the next channel recovery — now duplicated in the DLQ.
+      expect(channel.ack).toHaveBeenCalledWith(message);
+    });
+
+    it('carries the x-death history into the DLQ message', async () => {
+      const consumer = await getConsumer();
+      const headers = xDeath([
+        { queue: 'payment_queue', count: 3 },
+        { queue: 'payment_queue.retry', count: 3 },
+      ]);
+
+      await consumer(makeMessage({ orderId: 'order-1' }, headers));
+
+      // The history is the only record of why the message ended up here.
+      expect(channel.publish).toHaveBeenCalledWith(
+        'payments.dlx',
+        'payment.order.dlq',
+        expect.any(Buffer),
+        expect.objectContaining({ headers })
+      );
+    });
+
+    it('honours a lower retry budget', async () => {
+      const consumer = await getConsumer({
+        maxRetries: 1,
+        retryDelayMs: 1_000,
+      });
+
+      await consumer(
+        makeMessage(
+          { orderId: 'order-1' },
+          xDeath([{ queue: 'payment_queue', count: 1 }])
+        )
+      );
+
+      expect(error).toHaveBeenCalledWith(
+        'Max retries (1) exceeded. Sending to DLQ.'
+      );
+      expect(channel.publish).toHaveBeenCalled();
+      expect(channel.nack).not.toHaveBeenCalled();
+    });
+
+    it('keeps retrying while the budget allows it', async () => {
+      const consumer = await getConsumer({
+        maxRetries: 5,
+        retryDelayMs: 1_000,
+      });
+
+      await consumer(
+        makeMessage(
+          { orderId: 'order-1' },
+          xDeath([{ queue: 'payment_queue', count: 4 }])
+        )
+      );
+
+      expect(warn).toHaveBeenCalledWith(
+        'Processing failed (attempt 5/6)Retrying in 1s'
+      );
+      expect(channel.nack).toHaveBeenCalled();
+      expect(channel.publish).not.toHaveBeenCalled();
+    });
+
+    it('does not fail the consumer when the message is dead lettered', async () => {
+      const consumer = await getConsumer();
+
+      // The consumer swallows the failure so the channel keeps delivering.
+      await expect(
+        consumer(
+          makeMessage(
+            { orderId: 'order-1' },
+            xDeath([{ queue: 'payment_queue', count: 3 }])
+          )
+        )
+      ).resolves.toBeUndefined();
     });
   });
 
