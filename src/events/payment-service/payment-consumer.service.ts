@@ -3,6 +3,7 @@ import {
   Logger,
   type OnApplicationBootstrap,
 } from '@nestjs/common';
+import { metrics } from '@/observability/metrics';
 import { getErrorDetails } from '@/utils/error.util';
 import type { PaymentOrderMessage } from '../interfaces/payments-queue.interface';
 import { PaymentQueueService } from '../payment-queue/payment-queue.service';
@@ -52,6 +53,10 @@ export class PaymentConsumerService implements OnApplicationBootstrap {
         throw new Error('Invalid payment message received');
       }
 
+      metrics.payment_order_amount.record(message.amount, {
+        payment_method: message.paymentMethod,
+      });
+
       //TODO: Implement payment service
 
       this.logger.log('Payment order received and validated');
@@ -69,26 +74,33 @@ export class PaymentConsumerService implements OnApplicationBootstrap {
 
   private validateMessage(message: PaymentOrderMessage): boolean {
     if (!message.orderId) {
+      metrics.payment_orders_rejected.add(1, { reason: 'missing_order_id' });
       this.logger.error('Missing orderId in payment message');
       return false;
     }
 
     if (!message.userId) {
+      metrics.payment_orders_rejected.add(1, { reason: 'missing_user_id' });
       this.logger.error('Missing userId in payment message');
       return false;
     }
 
     if (!message.amount || message.amount <= 0) {
+      metrics.payment_orders_rejected.add(1, { reason: 'invalid_amount' });
       this.logger.error('Invalid amount in payment message');
       return false;
     }
 
     if (!message.paymentMethod) {
+      metrics.payment_orders_rejected.add(1, {
+        reason: 'missing_payment_method',
+      });
       this.logger.error('Missing paymentMethod in payment message');
       return false;
     }
 
     if (!message.items || message.items.length === 0) {
+      metrics.payment_orders_rejected.add(1, { reason: 'missing_items' });
       this.logger.error('No items in payment message');
       return false;
     }
@@ -101,6 +113,7 @@ export class PaymentConsumerService implements OnApplicationBootstrap {
     const expectedAmount = itemsTotal - message.discount;
 
     if (message.amount !== expectedAmount) {
+      metrics.payment_orders_rejected.add(1, { reason: 'amount_mismatch' });
       this.logger.error('Payment amount does not match order total');
       return false;
     }
