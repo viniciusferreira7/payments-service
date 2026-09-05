@@ -31,6 +31,11 @@ describe('DlqController (e2e)', () => {
           RABBITMQ_QUEUE_PAYMENTS: topology.queue,
           RABBITMQ_EXCHANGE: topology.exchange,
           RABBITMQ_ROUTING_KEY_PAYMENT_ORDER: topology.routingKey,
+          // A rejected message only reaches the DLQ once its retries are
+          // spent. Production waits 30s per attempt; the spec runs the same
+          // loop in milliseconds so the wait windows below still hold.
+          RABBITMQ_RETRY_MAX_ATTEMPTS: 1,
+          RABBITMQ_RETRY_DELAY_MS: 100,
         })
       )
     );
@@ -70,10 +75,28 @@ describe('DlqController (e2e)', () => {
 
     expect(body.count).toBe(1);
     expect(body.messages[0].content.orderId).toBe('order-rejected');
+
+    // The message got here through the retry queue, so its history carries
+    // both hops: the rejection on the main queue and the retry TTL expiry.
+    expect(broker.deathsOf(body.messages[0])).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          reason: 'rejected',
+          queue: topology.queue,
+          exchange: topology.exchange,
+        }),
+        expect.objectContaining({
+          reason: 'expired',
+          queue: topology.retryQueue,
+        }),
+      ])
+    );
+
+    // `deathInfo` reports the most recent hop, which is now the retry expiry
+    // rather than the rejection that started it.
     expect(body.messages[0].deathInfo).toMatchObject({
-      reason: 'rejected',
-      queue: topology.queue,
-      exchange: topology.exchange,
+      reason: 'expired',
+      queue: topology.retryQueue,
       count: 1,
     });
   });
@@ -126,7 +149,13 @@ describe('DlqController (e2e)', () => {
       const { body } = await dlq.messages();
 
       return (
-        body.count === 1 && body.messages[0].deathInfo?.reason === 'rejected'
+        body.count === 1 &&
+        broker
+          .deathsOf(body.messages[0])
+          .some(
+            (death) =>
+              death.queue === topology.queue && death.reason === 'rejected'
+          )
       );
     });
   });
@@ -136,7 +165,7 @@ describe('DlqController (e2e)', () => {
 
     await dlq.reprocess('order-404').expect(404);
 
-    expect(await broker.messageCount()).toBe(1);
+    await broker.waitForDeadLetterCount(1);
   });
 
   it('reprocesses every message on the queue', async () => {
@@ -177,7 +206,7 @@ describe('DlqController (e2e)', () => {
 
     await dlq.discard('order-404').expect(404);
 
-    expect(await broker.messageCount()).toBe(1);
+    await broker.waitForDeadLetterCount(1);
   });
 
   it('purges the dead letter queue', async () => {
@@ -190,6 +219,6 @@ describe('DlqController (e2e)', () => {
 
     expect(body).toEqual({ success: true, purgedCount: 2 });
 
-    expect(await broker.messageCount()).toBe(0);
+    await broker.waitForDeadLetterCount(0);
   });
 });

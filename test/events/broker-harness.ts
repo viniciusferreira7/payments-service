@@ -30,6 +30,9 @@ export class BrokerHarness {
   async purge(): Promise<void> {
     await this.rabbitmq.getChannel().purgeQueue(this.topology.queue);
     await this.rabbitmq.getChannel().purgeQueue(this.topology.dlq);
+    // A message still waiting out its TTL would come back on the main queue
+    // mid-spec, so the retry queue has to be emptied along with the others.
+    await this.rabbitmq.getChannel().purgeQueue(this.topology.retryQueue);
   }
 
   async publishOrder(order: PaymentOrderMessage): Promise<void> {
@@ -72,6 +75,19 @@ export class BrokerHarness {
         (await this.messageCount()) === 0 &&
         (await this.messageCount(this.topology.queue)) === 0
     );
+  }
+
+  /**
+   * The `x-death` history the broker stamped on the message the DLQ holds.
+   * A message only reaches the DLQ after the retry loop, so the entry that
+   * matters is rarely the first one.
+   */
+  deathsOf(message: {
+    properties: { headers?: Record<string, unknown> };
+  }): Array<Record<string, unknown>> {
+    const deaths = message.properties.headers?.['x-death'];
+
+    return Array.isArray(deaths) ? deaths : [];
   }
 }
 
