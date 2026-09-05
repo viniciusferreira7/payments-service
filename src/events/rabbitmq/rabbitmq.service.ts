@@ -170,7 +170,7 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
     await this.channel.assertQueue(dlqName, {
       durable: true,
       arguments: {
-        'x-message-tll': 604_800_000, // 7 days
+        'x-message-ttl': 604_800_000, // 7 days
       },
     });
 
@@ -296,7 +296,7 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
         const retryCount = this.getRetryCount(msg);
 
         this.logger.log(
-          `Message received (attempt ${retryCount + 1}/${maxRetries ?? 3})`
+          `Message received (attempt ${retryCount + 1}/${maxRetries + 1})`
         );
 
         try {
@@ -314,7 +314,7 @@ export class RabbitmqService implements OnModuleInit, OnModuleDestroy {
         } catch (error) {
           if (retryCount < maxRetries) {
             this.logger.warn(
-              `Processing failed (attempt ${retryCount + 1}/${maxRetries + 1})` +
+              `Processing failed (attempt ${retryCount + 1}/${maxRetries + 1}). ` +
                 `Retrying in ${retryDelayMs / 1_000}s`
             );
 

@@ -239,7 +239,7 @@ describe('RabbitmqService', () => {
 
       expect(channel.assertQueue).toHaveBeenCalledWith('payment_queue.dlq', {
         durable: true,
-        arguments: expect.objectContaining({ 'x-message-tll': 604_800_000 }),
+        arguments: expect.objectContaining({ 'x-message-ttl': 604_800_000 }),
       });
       expect(channel.bindQueue).toHaveBeenCalledWith(
         'payment_queue.dlq',
@@ -415,7 +415,7 @@ describe('RabbitmqService', () => {
         failure.stack
       );
       expect(warn).toHaveBeenCalledWith(
-        'Processing failed (attempt 1/4)Retrying in 30s'
+        'Processing failed (attempt 1/4). Retrying in 30s'
       );
     });
 
@@ -496,7 +496,7 @@ describe('RabbitmqService', () => {
 
       await consumer(makeMessage({ orderId: 'order-1' }));
 
-      expect(log).toHaveBeenCalledWith('Message received (attempt 1/3)');
+      expect(log).toHaveBeenCalledWith('Message received (attempt 1/4)');
       expect(channel.nack).toHaveBeenCalled();
     });
 
@@ -505,7 +505,7 @@ describe('RabbitmqService', () => {
 
       await consumer(makeMessage({ orderId: 'order-1' }, xDeath([])));
 
-      expect(log).toHaveBeenCalledWith('Message received (attempt 1/3)');
+      expect(log).toHaveBeenCalledWith('Message received (attempt 1/4)');
     });
 
     it('counts the deaths the main queue recorded', async () => {
@@ -518,9 +518,9 @@ describe('RabbitmqService', () => {
         )
       );
 
-      expect(log).toHaveBeenCalledWith('Message received (attempt 3/3)');
+      expect(log).toHaveBeenCalledWith('Message received (attempt 3/4)');
       expect(warn).toHaveBeenCalledWith(
-        'Processing failed (attempt 3/4)Retrying in 30s'
+        'Processing failed (attempt 3/4). Retrying in 30s'
       );
       expect(channel.nack).toHaveBeenCalled();
     });
@@ -541,7 +541,7 @@ describe('RabbitmqService', () => {
         )
       );
 
-      expect(log).toHaveBeenCalledWith('Message received (attempt 2/3)');
+      expect(log).toHaveBeenCalledWith('Message received (attempt 2/4)');
       expect(channel.nack).toHaveBeenCalled();
       expect(channel.publish).not.toHaveBeenCalled();
     });
@@ -556,7 +556,7 @@ describe('RabbitmqService', () => {
         )
       );
 
-      expect(log).toHaveBeenCalledWith('Message received (attempt 1/3)');
+      expect(log).toHaveBeenCalledWith('Message received (attempt 1/4)');
     });
 
     it('publishes to the dead letter exchange once the retries are spent', async () => {
@@ -648,7 +648,7 @@ describe('RabbitmqService', () => {
       );
 
       expect(warn).toHaveBeenCalledWith(
-        'Processing failed (attempt 5/6)Retrying in 1s'
+        'Processing failed (attempt 5/6). Retrying in 1s'
       );
       expect(channel.nack).toHaveBeenCalled();
       expect(channel.publish).not.toHaveBeenCalled();
