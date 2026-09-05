@@ -32,6 +32,10 @@ export const envSchema = z.object({
     .string()
     .min(1)
     .default('payment.order'),
+  // How many times a failed message is retried before it is dead lettered,
+  // and how long it waits in the retry queue between attempts.
+  RABBITMQ_RETRY_MAX_ATTEMPTS: z.coerce.number().int().min(0).default(3),
+  RABBITMQ_RETRY_DELAY_MS: z.coerce.number().int().min(0).default(30_000),
 
   OTEL_SERVICE_NAME: z.string().min(1),
   OTEL_EXPORTER_OTLP_ENDPOINT: z.url(),

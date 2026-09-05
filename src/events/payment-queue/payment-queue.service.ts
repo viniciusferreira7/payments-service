@@ -31,6 +31,10 @@ export class PaymentQueueService {
       routingKey: this.envService.get('RABBITMQ_ROUTING_KEY_PAYMENT_ORDER'),
       exchange: this.envService.get('RABBITMQ_EXCHANGE'),
       callback,
+      options: {
+        maxRetries: this.envService.get('RABBITMQ_RETRY_MAX_ATTEMPTS'),
+        retryDelayMs: this.envService.get('RABBITMQ_RETRY_DELAY_MS'),
+      },
     });
 
     this.logger.log('Payment orders consumer is ready');
