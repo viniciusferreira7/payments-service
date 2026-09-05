@@ -38,6 +38,61 @@ describe('envSchema', () => {
     expect(env.PORT).toBe(4000);
   });
 
+  it('defaults the retry policy to the values the consumer used before it was configurable', () => {
+    const env = envSchema.parse(baseEnv);
+
+    expect(env.RABBITMQ_RETRY_MAX_ATTEMPTS).toBe(3);
+    expect(env.RABBITMQ_RETRY_DELAY_MS).toBe(30_000);
+  });
+
+  it('coerces the retry policy from strings', () => {
+    const env = envSchema.parse({
+      ...baseEnv,
+      RABBITMQ_RETRY_MAX_ATTEMPTS: '5',
+      RABBITMQ_RETRY_DELAY_MS: '1000',
+    });
+
+    expect(env.RABBITMQ_RETRY_MAX_ATTEMPTS).toBe(5);
+    expect(env.RABBITMQ_RETRY_DELAY_MS).toBe(1_000);
+  });
+
+  it('accepts a retry budget of zero', () => {
+    // Zero is a real setting: dead letter a failed message on first delivery.
+    const env = envSchema.parse({
+      ...baseEnv,
+      RABBITMQ_RETRY_MAX_ATTEMPTS: '0',
+      RABBITMQ_RETRY_DELAY_MS: '0',
+    });
+
+    expect(env.RABBITMQ_RETRY_MAX_ATTEMPTS).toBe(0);
+    expect(env.RABBITMQ_RETRY_DELAY_MS).toBe(0);
+  });
+
+  it('rejects a negative retry budget', () => {
+    expect(() =>
+      envSchema.parse({ ...baseEnv, RABBITMQ_RETRY_MAX_ATTEMPTS: '-1' })
+    ).toThrow();
+  });
+
+  it('rejects a negative retry delay', () => {
+    expect(() =>
+      envSchema.parse({ ...baseEnv, RABBITMQ_RETRY_DELAY_MS: '-1' })
+    ).toThrow();
+  });
+
+  it('rejects a fractional retry budget', () => {
+    // `x-message-ttl` and the attempt count are whole numbers to the broker.
+    expect(() =>
+      envSchema.parse({ ...baseEnv, RABBITMQ_RETRY_MAX_ATTEMPTS: '1.5' })
+    ).toThrow();
+  });
+
+  it('rejects a retry delay that is not a number', () => {
+    expect(() =>
+      envSchema.parse({ ...baseEnv, RABBITMQ_RETRY_DELAY_MS: '30s' })
+    ).toThrow();
+  });
+
   it('accepts a postgres connection string', () => {
     expect(envSchema.parse(baseEnv).DATABASE_URL).toBe(baseEnv.DATABASE_URL);
   });
