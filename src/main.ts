@@ -1,9 +1,11 @@
-import { Logger, ValidationPipe } from '@nestjs/common';
+import { type INestApplication, Logger, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { PinoLoggerService } from '@viniciusferreira7/signals/nest';
 import { AppModule } from './app.module';
 import { SWAGGER_PATH, setupSwagger } from './config/swagger.config';
 import { EnvService } from './env/env.service';
+import { createShutdownHandler } from './health/graceful-shutdown';
+import { ShutdownService } from './health/shutdown.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
@@ -25,6 +27,8 @@ async function bootstrap() {
 
   setupSwagger(app);
 
+  registerGracefulShutdown(app, envService, new Logger('Shutdown'));
+
   await app.listen(port);
 
   const logger = new Logger('Bootstrap');
@@ -33,4 +37,29 @@ async function bootstrap() {
     `📚  Swagger documentation: http://localhost:${port}/${SWAGGER_PATH}`
   );
 }
+
+function registerGracefulShutdown(
+  app: INestApplication,
+  envService: EnvService,
+  logger: Logger
+) {
+  const handleShutdown = createShutdownHandler({
+    shutdownService: app.get(ShutdownService),
+    drainDelayMs: envService.get('SHUTDOWN_DRAIN_DELAY_MS'),
+    close: async () => {
+      await app.close();
+      // Best-effort: an unreachable OTLP collector must not fail the shutdown.
+    },
+    logger,
+  });
+
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+    process.on(signal, () => {
+      handleShutdown(signal).catch((err) =>
+        logger.error(err, '[Shutdown] failed to shut down gracefully')
+      );
+    });
+  }
+}
+
 bootstrap();
