@@ -59,6 +59,9 @@ describe('Swagger (e2e)', () => {
       '/dlq/reprocess-all',
       '/dlq/reprocess/{orderId}',
       '/dlq/stats',
+      '/health/live',
+      '/health/ready',
+      '/health/startup',
     ]);
   });
 

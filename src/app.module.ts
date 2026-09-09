@@ -9,6 +9,7 @@ import { envSchema } from './env/env';
 import { EnvModule } from './env/env.module';
 import { EnvService } from './env/env.service';
 import { EventsModule } from './events/events.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { EventsModule } from './events/events.module';
       useFactory: databaseConfig,
     }),
     EventsModule,
+    HealthModule,
   ],
   controllers: [AppController],
   providers: [AppService],
