@@ -14,6 +14,7 @@ const LOG_LEVELS: LogLevel[] = [
 export const envSchema = z.object({
   NODE_ENV: z.enum(['dev', 'test', 'production']).default('dev'),
   PORT: z.coerce.number().default(3335),
+  SHUTDOWN_DRAIN_DELAY_MS: z.coerce.number().int().min(0).default(10_000),
 
   DATABASE_URL: z.string(),
   DATABASE_PORT: z.coerce.number().default(5432),
