@@ -10,6 +10,7 @@ import { EnvModule } from './env/env.module';
 import { EnvService } from './env/env.service';
 import { EventsModule } from './events/events.module';
 import { HealthModule } from './health/health.module';
+import { paymentsServiceDetails } from './utils/payments-service-details';
 
 @Module({
   imports: [
@@ -21,7 +22,10 @@ import { HealthModule } from './health/health.module';
       },
     }),
     EnvModule,
-    ObservabilityModule.forRoot({ serviceName: 'payments-service' }),
+    ObservabilityModule.forRoot({
+      serviceName: paymentsServiceDetails.name,
+      serviceVersion: paymentsServiceDetails.version,
+    }),
     TypeOrmModule.forRootAsync({
       imports: [EnvModule],
       inject: [EnvService],
