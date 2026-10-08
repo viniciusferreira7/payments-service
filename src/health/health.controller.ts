@@ -22,6 +22,18 @@ export class HealthController {
     private readonly shutdownService: ShutdownService
   ) {}
 
+  @Get()
+  @ApiOperation({
+    summary: 'Health check: same verdict as the readiness probe',
+  })
+  @ApiOkResponse({ description: 'The service and its database are up' })
+  @ApiServiceUnavailableResponse({
+    description: 'The database is down or the process is shutting down',
+  })
+  health(@Res({ passthrough: true }) reply: HttpReply) {
+    return this.readiness(reply);
+  }
+
   @Get('live')
   @ApiOperation({
     summary: 'Liveness probe: the process is up and the event loop responds',
