@@ -137,6 +137,53 @@ describe('PaymentsService (integration)', () => {
       expect(await payments.countBy({ orderId: message.orderId })).toBe(1);
     });
 
+    it.each([
+      [
+        'amount',
+        { amount: 300, items: [{ productId: 'p', quantity: 1, price: 300 }] },
+      ],
+      ['userId', { userId: randomUUID() }],
+      ['paymentMethod', { paymentMethod: 'boleto' }],
+    ])(
+      'refuses a redelivery whose %s disagrees with the stored payment',
+      async (_field, changes) => {
+        const message = order(50);
+        const stored = await service.processPayment(message);
+        const charge = vi.spyOn(gateway, 'charge');
+
+        await expect(
+          service.processPayment({ ...message, ...changes })
+        ).rejects.toThrow(
+          `Payment order ${message.orderId} conflicts with the stored payment`
+        );
+        expect(charge).not.toHaveBeenCalled();
+        expect(
+          await payments.findOneByOrFail({ orderId: message.orderId })
+        ).toMatchObject({
+          userId: message.userId,
+          amount: 50,
+          status: stored.status,
+          transactionId: stored.transactionId,
+        });
+      }
+    );
+
+    it('refuses a conflicting redelivery while the payment is still pending', async () => {
+      const message = order(50);
+      await payments.insert({
+        orderId: message.orderId,
+        userId: message.userId,
+        amount: 50,
+        paymentMethod: 'pix',
+      });
+      const charge = vi.spyOn(gateway, 'charge');
+
+      await expect(
+        service.processPayment({ ...message, amount: 300 })
+      ).rejects.toThrow('conflicts with the stored payment');
+      expect(charge).not.toHaveBeenCalled();
+    });
+
     it('leaves the payment pending and propagates when the gateway fails', async () => {
       const message = order(50);
       vi.spyOn(gateway, 'charge').mockRejectedValue(new Error('gateway down'));

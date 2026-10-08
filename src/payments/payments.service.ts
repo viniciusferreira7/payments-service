@@ -1,7 +1,9 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Repository } from 'typeorm';
+import { toCents } from '@/common/money';
 import type { PaymentOrderMessage } from '@/events/interfaces/payments-queue.interface';
+import { metrics } from '@/observability/metrics';
 import { Payment } from './entities/payment.entity';
 import { PaymentStatus } from './enums/payment-status.enum';
 import { FakePaymentGatewayService } from './gateway/fake-payment-gateway.service';
@@ -44,6 +46,21 @@ export class PaymentsService {
         lock: { mode: 'pessimistic_write' },
       });
 
+      // The order id is the key, so a redelivery must say the same thing. One
+      // that disagrees is not a duplicate: acking it would drop it silently.
+      if (!PaymentsService.matches(payment, message)) {
+        metrics.payment_orders_rejected.add(1, {
+          reason: 'conflicting_redelivery',
+        });
+        this.logger.warn(
+          `Payment order ${payment.orderId} conflicts with the stored payment`
+        );
+
+        throw new Error(
+          `Payment order ${payment.orderId} conflicts with the stored payment`
+        );
+      }
+
       if (payment.status !== PaymentStatus.PENDING) {
         this.logger.log(
           `Payment for order ${payment.orderId} already processed`
@@ -66,6 +83,17 @@ export class PaymentsService {
 
       return manager.save(payment);
     });
+  }
+
+  private static matches(
+    payment: Payment,
+    message: PaymentOrderMessage
+  ): boolean {
+    return (
+      payment.userId === message.userId &&
+      toCents(payment.amount) === toCents(message.amount) &&
+      payment.paymentMethod === message.paymentMethod
+    );
   }
 
   /** Another user's payment answers like a missing one: no hint it exists. */
