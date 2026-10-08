@@ -6,7 +6,7 @@ const baseEnv = {
   DATABASE_USERNAME: 'user',
   DATABASE_PASSWORD: 'pass',
   DATABASE_NAME: 'payments',
-  JWT_SECRET: 'secret',
+  JWT_SECRET: 'unit-test-jwt-secret-with-at-least-32-chars',
   JWT_EXPIRES_IN: '1s',
   RABBITMQ_URL: 'amqp://admin:admin@localhost:5672',
   RABBITMQ_QUEUE_PAYMENTS: 'payment_queue',
@@ -136,6 +136,15 @@ describe('envSchema', () => {
     expect(() =>
       envSchema.parse({ ...baseEnv, RABBITMQ_EXCHANGE: '' })
     ).toThrow();
+  });
+
+  it('rejects a JWT_SECRET shorter than 32 characters', () => {
+    expect(() =>
+      envSchema.parse({ ...baseEnv, JWT_SECRET: 'a'.repeat(31) })
+    ).toThrow();
+    expect(
+      envSchema.parse({ ...baseEnv, JWT_SECRET: 'a'.repeat(32) }).JWT_SECRET
+    ).toHaveLength(32);
   });
 
   it('rejects an empty JWT_SECRET', () => {

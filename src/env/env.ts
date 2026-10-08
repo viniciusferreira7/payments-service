@@ -22,7 +22,9 @@ export const envSchema = z.object({
   DATABASE_PASSWORD: z.string(),
   DATABASE_NAME: z.string(),
 
-  JWT_SECRET: z.string().min(1),
+  // Every protected route trusts HS256 tokens signed with it: same floor as
+  // users-service, which signs them.
+  JWT_SECRET: z.string().min(32),
   JWT_EXPIRES_IN: z.string().min(2),
 
   RABBITMQ_URL: z.url(),

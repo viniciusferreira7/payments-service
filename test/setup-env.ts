@@ -18,7 +18,7 @@ const defaults: Record<string, string> = {
   DATABASE_USERNAME: 'test',
   DATABASE_PASSWORD: 'test',
   DATABASE_NAME: 'payments_test',
-  JWT_SECRET: 'test-secret',
+  JWT_SECRET: 'e2e-test-jwt-secret-with-at-least-32-chars',
   JWT_EXPIRES_IN: '1d',
   RABBITMQ_URL: 'amqp://test:test@localhost:5673',
   RABBITMQ_TEST_URL: 'amqp://test:test@localhost:5673',
