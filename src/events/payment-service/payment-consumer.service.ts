@@ -3,10 +3,14 @@ import {
   Logger,
   type OnApplicationBootstrap,
 } from '@nestjs/common';
+import { z } from 'zod';
+import { toCents } from '@/common/money';
 import { metrics } from '@/observability/metrics';
 import { getErrorDetails } from '@/utils/error.util';
 import type { PaymentOrderMessage } from '../interfaces/payments-queue.interface';
 import { PaymentQueueService } from '../payment-queue/payment-queue.service';
+
+const uuid = z.uuid();
 
 @Injectable()
 export class PaymentConsumerService implements OnApplicationBootstrap {
@@ -85,6 +89,18 @@ export class PaymentConsumerService implements OnApplicationBootstrap {
       return false;
     }
 
+    if (!uuid.safeParse(message.orderId).success) {
+      metrics.payment_orders_rejected.add(1, { reason: 'invalid_order_id' });
+      this.logger.error('Invalid orderId in payment message');
+      return false;
+    }
+
+    if (!uuid.safeParse(message.userId).success) {
+      metrics.payment_orders_rejected.add(1, { reason: 'invalid_user_id' });
+      this.logger.error('Invalid userId in payment message');
+      return false;
+    }
+
     if (!message.amount || message.amount <= 0) {
       metrics.payment_orders_rejected.add(1, { reason: 'invalid_amount' });
       this.logger.error('Invalid amount in payment message');
@@ -105,14 +121,16 @@ export class PaymentConsumerService implements OnApplicationBootstrap {
       return false;
     }
 
-    const itemsTotal = message.items.reduce(
-      (acc, item) => acc + item.price * item.quantity,
+    // In whole cents: 19.9 * 3 is 59.699999999999996 as a float, and the
+    // checkout publishes 59.7.
+    const itemsCents = message.items.reduce(
+      (acc, item) => acc + toCents(item.price) * item.quantity,
       0
     );
 
-    const expectedAmount = itemsTotal - message.discount;
+    const expectedCents = itemsCents - toCents(message.discount);
 
-    if (message.amount !== expectedAmount) {
+    if (toCents(message.amount) !== expectedCents) {
       metrics.payment_orders_rejected.add(1, { reason: 'amount_mismatch' });
       this.logger.error('Payment amount does not match order total');
       return false;

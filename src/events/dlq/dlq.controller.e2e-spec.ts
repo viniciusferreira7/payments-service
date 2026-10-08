@@ -17,6 +17,10 @@ import {
 import { waitUntil } from 'test/utils/wait-until';
 import { EnvService } from '@/env/env.service';
 
+const ORDER_OK = '9c1a7e52-3b4d-4f6a-8e9b-1a2b3c4d5e6f';
+const ORDER_A = '1f2e3d4c-5b6a-4978-8a69-5a4b3c2d1e0f';
+const ORDER_B = '2a3b4c5d-6e7f-4a8b-9c0d-1e2f3a4b5c6d';
+
 describe('DlqController (e2e)', () => {
   const topology = makeBrokerTopology();
 
@@ -126,13 +130,13 @@ describe('DlqController (e2e)', () => {
   });
 
   it('reprocesses an order the consumer then accepts', async () => {
-    await broker.deadLetter(makePaymentOrder({ orderId: 'order-ok' }));
+    await broker.deadLetter(makePaymentOrder({ orderId: ORDER_OK }));
 
-    const { body } = await dlq.reprocess('order-ok').expect(201);
+    const { body } = await dlq.reprocess(ORDER_OK).expect(201);
 
     expect(body).toEqual({
       success: true,
-      message: 'Message order-ok sent back to main queue for reprocessing',
+      message: `Message ${ORDER_OK} sent back to main queue for reprocessing`,
     });
 
     await broker.waitForDrainedQueues();
@@ -170,8 +174,8 @@ describe('DlqController (e2e)', () => {
 
   it('reprocesses every message on the queue', async () => {
     await broker.deadLetter(
-      makePaymentOrder({ orderId: 'order-1' }),
-      makePaymentOrder({ orderId: 'order-2' })
+      makePaymentOrder({ orderId: ORDER_A }),
+      makePaymentOrder({ orderId: ORDER_B })
     );
 
     const { body } = await dlq.reprocessAll().expect(201);

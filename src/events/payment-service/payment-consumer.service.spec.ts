@@ -147,6 +147,16 @@ describe('PaymentConsumerService', () => {
         'Missing paymentMethod in payment message',
       ],
       ['items is empty', { items: [] }, 'No items in payment message'],
+      [
+        'orderId is not a UUID',
+        { orderId: 'order-1' },
+        'Invalid orderId in payment message',
+      ],
+      [
+        'userId is not a UUID',
+        { userId: 'user-1' },
+        'Invalid userId in payment message',
+      ],
     ])(
       'rejects the message when %s',
       async (_case, overrides: Partial<PaymentOrderMessage>, reason) => {
@@ -272,6 +282,55 @@ describe('PaymentConsumerService', () => {
           makePaymentOrder<PaymentOrderMessage>({
             ...overrides,
             items: [{ productId: 'product-1', quantity: 1, price: 100 }],
+          })
+        )
+      ).rejects.toThrow('Invalid payment message received');
+
+      expect(error).toHaveBeenCalledWith(
+        'Payment amount does not match order total'
+      );
+    });
+
+    it('accepts a total that only adds up in cents (3 × 19.90 = 59.70)', async () => {
+      const handler = await getRegisteredHandler();
+
+      await expect(
+        handler(
+          makePaymentOrder<PaymentOrderMessage>({
+            amount: 59.7,
+            discount: 0,
+            items: [{ productId: 'product-1', quantity: 3, price: 19.9 }],
+          })
+        )
+      ).resolves.toBeUndefined();
+    });
+
+    it('accepts a discount in cents (0.30 + 0.10 − 0.10 = 0.30)', async () => {
+      const handler = await getRegisteredHandler();
+
+      await expect(
+        handler(
+          makePaymentOrder<PaymentOrderMessage>({
+            amount: 0.3,
+            discount: 0.1,
+            items: [
+              { productId: 'product-1', quantity: 1, price: 0.3 },
+              { productId: 'product-2', quantity: 1, price: 0.1 },
+            ],
+          })
+        )
+      ).resolves.toBeUndefined();
+    });
+
+    it('rejects an amount one cent off', async () => {
+      const handler = await getRegisteredHandler();
+
+      await expect(
+        handler(
+          makePaymentOrder<PaymentOrderMessage>({
+            amount: 59.71,
+            discount: 0,
+            items: [{ productId: 'product-1', quantity: 3, price: 19.9 }],
           })
         )
       ).rejects.toThrow('Invalid payment message received');

@@ -18,12 +18,15 @@ import type { PaymentOrderMessage } from '@/events/interfaces/payments-queue.int
  * makePaymentOrder<IncomingPaymentOrderMessage>({ metadata: { source: 'web' } });
  * ```
  */
+export const DEFAULT_ORDER_ID = '0b8f6a3e-1c2d-4e5f-8a9b-0c1d2e3f4a5b';
+export const DEFAULT_USER_ID = '7d1e2f3a-4b5c-4d6e-9f70-8192a3b4c5d6';
+
 export function makePaymentOrder<
   T extends PaymentOrderMessage = PaymentOrderMessage,
 >(overrides: Partial<T> = {}): T {
   return {
-    orderId: 'order-1',
-    userId: 'user-1',
+    orderId: DEFAULT_ORDER_ID,
+    userId: DEFAULT_USER_ID,
     amount: 100,
     discount: 0,
     items: [{ productId: 'product-1', quantity: 1, price: 100 }],
