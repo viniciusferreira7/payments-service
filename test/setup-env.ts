@@ -8,7 +8,7 @@
  */
 const defaults: Record<string, string> = {
   NODE_ENV: 'test',
-  PORT: '3335',
+  PORT: '3337',
   // Port 5434 is what `docker-compose.yaml` publishes for the test Postgres
   // (`${DATABASE_TEST_PORT:-5434}`) — the dev one owns 5433. Defaulting to 5432
   // here silently pointed the suite at whatever unrelated Postgres happened to
@@ -29,10 +29,6 @@ const defaults: Record<string, string> = {
   // only exist to satisfy the Zod schema.
   OTEL_SERVICE_NAME: 'payments-service',
   OTEL_EXPORTER_OTLP_ENDPOINT: 'http://localhost:4318',
-  // Required by `envSchema` — no gateway is reached in the test lanes, these
-  // only need to be a valid URL and a non-empty key.
-  PAYMENT_GATEWAY_URL: 'http://localhost:4319',
-  PAYMENT_GATEWAY_API_KEY: 'test-api-key',
 };
 
 for (const [key, value] of Object.entries(defaults)) {

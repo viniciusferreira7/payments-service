@@ -13,7 +13,7 @@ const LOG_LEVELS: LogLevel[] = [
 
 export const envSchema = z.object({
   NODE_ENV: z.enum(['dev', 'test', 'production']).default('dev'),
-  PORT: z.coerce.number().default(3335),
+  PORT: z.coerce.number().default(3337),
   SHUTDOWN_DRAIN_DELAY_MS: z.coerce.number().int().min(0).default(10_000),
 
   DATABASE_URL: z.string(),
@@ -41,9 +41,6 @@ export const envSchema = z.object({
   OTEL_SERVICE_NAME: z.string().min(1),
   OTEL_EXPORTER_OTLP_ENDPOINT: z.url(),
   LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
-
-  PAYMENT_GATEWAY_URL: z.url(),
-  PAYMENT_GATEWAY_API_KEY: z.string().min(1),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -13,8 +13,6 @@ const baseEnv = {
   RABBITMQ_EXCHANGE: 'payments',
   OTEL_SERVICE_NAME: 'payments-service',
   OTEL_EXPORTER_OTLP_ENDPOINT: 'http://localhost:4318',
-  PAYMENT_GATEWAY_URL: 'https://example.com',
-  PAYMENT_GATEWAY_API_KEY: 'GHGS*bkjg7fvfVlkjknl_kljdsfuihgiuas15dVy',
 };
 
 describe('envSchema', () => {
@@ -22,7 +20,7 @@ describe('envSchema', () => {
     const env = envSchema.parse(baseEnv);
 
     expect(env.NODE_ENV).toBe('dev');
-    expect(env.PORT).toBe(3335);
+    expect(env.PORT).toBe(3337);
     expect(env.LOG_LEVEL).toBe('info');
   });
 
@@ -154,15 +152,10 @@ describe('envSchema', () => {
     ).toThrow();
   });
 
-  it('rejects an unknown PAYMENT_GATEWAY_URL', () => {
-    expect(() =>
-      envSchema.parse({ ...baseEnv, PAYMENT_GATEWAY_URL: '' })
-    ).toThrow();
-  });
+  it('no longer reads a payment gateway URL or key', () => {
+    const env = envSchema.parse(baseEnv);
 
-  it('rejects an unknown PAYMENT_GATEWAY_API_KEY', () => {
-    expect(() =>
-      envSchema.parse({ ...baseEnv, PAYMENT_GATEWAY_API_KEY: '' })
-    ).toThrow();
+    expect(env).not.toHaveProperty('PAYMENT_GATEWAY_URL');
+    expect(env).not.toHaveProperty('PAYMENT_GATEWAY_API_KEY');
   });
 });
