@@ -13,6 +13,7 @@ import { EnvModule } from './env/env.module';
 import { EnvService } from './env/env.service';
 import { EventsModule } from './events/events.module';
 import { HealthModule } from './health/health.module';
+import { PaymentsModule } from './payments/payments.module';
 import { paymentsServiceDetails } from './utils/payments-service-details';
 
 @Module({
@@ -35,6 +36,7 @@ import { paymentsServiceDetails } from './utils/payments-service-details';
       inject: [EnvService],
       useFactory: databaseConfig,
     }),
+    PaymentsModule,
     EventsModule,
     HealthModule,
   ],
