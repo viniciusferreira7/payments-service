@@ -84,6 +84,14 @@ describe('Health probes (E2E)', () => {
 
               isInitialized: false,
 
+              // What `TypeOrmModule.forFeature` reads to build repositories;
+              // nothing in this spec touches them.
+              entityMetadatas: [],
+              options: { type: 'postgres' },
+              getRepository() {
+                return {};
+              },
+
               async destroy() {
                 // no connection to close: this double is never connected
               },
