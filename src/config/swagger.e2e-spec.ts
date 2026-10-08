@@ -132,19 +132,25 @@ describe('Swagger (e2e)', () => {
     const statusesFor = (path: string, method: HttpMethod) =>
       responseStatuses(document, path, method);
 
-    expect(statusesFor('/dlq/stats', 'get')).toEqual(['200', '500']);
-    expect(statusesFor('/dlq/messages', 'get')).toEqual(['200', '500']);
+    expect(statusesFor('/dlq/stats', 'get')).toEqual(['200', '401', '500']);
+    expect(statusesFor('/dlq/messages', 'get')).toEqual(['200', '401', '500']);
     expect(statusesFor('/dlq/reprocess/{orderId}', 'post')).toEqual([
       '201',
+      '401',
       '404',
       '500',
     ]);
-    expect(statusesFor('/dlq/reprocess-all', 'post')).toEqual(['201', '500']);
+    expect(statusesFor('/dlq/reprocess-all', 'post')).toEqual([
+      '201',
+      '401',
+      '500',
+    ]);
     expect(statusesFor('/dlq/message/{orderId}', 'delete')).toEqual([
       '200',
+      '401',
       '404',
       '500',
     ]);
-    expect(statusesFor('/dlq/purge', 'delete')).toEqual(['200', '500']);
+    expect(statusesFor('/dlq/purge', 'delete')).toEqual(['200', '401', '500']);
   });
 });

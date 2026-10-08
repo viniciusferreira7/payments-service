@@ -5,6 +5,7 @@ import {
   ApiServiceUnavailableResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { Public } from '@/auth/decorators/public.decorator';
 import { DatabaseHealthIndicator } from './database-health.indicator';
 import { ShutdownService } from './shutdown.service';
 
@@ -12,6 +13,7 @@ import { ShutdownService } from './shutdown.service';
  * on the adapter's typings. */
 type HttpReply = { status: (code: number) => unknown };
 
+@Public()
 @ApiTags('Health')
 @Controller('health')
 export class HealthController {

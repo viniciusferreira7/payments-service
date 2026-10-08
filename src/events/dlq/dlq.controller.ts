@@ -10,6 +10,7 @@ import {
   Query,
 } from '@nestjs/common';
 import {
+  ApiBearerAuth,
   ApiInternalServerErrorResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
@@ -18,6 +19,7 @@ import {
   ApiQuery,
   ApiResponse,
   ApiTags,
+  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { getErrorDetails } from '@/utils/error.util';
 import { DlqService } from './dlq.service';
@@ -32,6 +34,10 @@ import type { DLQMessage } from './interfaces/dlq-message.interface';
 import type { DLQStats } from './interfaces/dlq-stats.interface';
 
 @ApiTags('Dead Letter Queue')
+// Any authenticated user may operate the DLQ: there is no admin role yet.
+// Tracked as an authorization gap in spec 6, not fixed here.
+@ApiBearerAuth('JWT-auth')
+@ApiUnauthorizedResponse({ description: 'Missing or invalid token' })
 @Controller('dlq')
 export class DlqController {
   private readonly logger = new Logger(DlqController.name);

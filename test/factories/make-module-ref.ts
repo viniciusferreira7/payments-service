@@ -1,4 +1,4 @@
-import type { INestApplication } from '@nestjs/common';
+import type { INestApplication, Type } from '@nestjs/common';
 import { ValidationPipe } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import {
@@ -30,7 +30,8 @@ import { FakeRabbitmqService } from '../events/fake-rabbitmq-service';
  * ```
  */
 export async function makeModuleRef(
-  configure?: (builder: TestingModuleBuilder) => TestingModuleBuilder
+  configure?: (builder: TestingModuleBuilder) => TestingModuleBuilder,
+  extraImports: Type[] = []
 ): Promise<TestingModule> {
   return makeBrokerModuleRef((builder) => {
     const withFakeBroker = builder
@@ -38,14 +39,15 @@ export async function makeModuleRef(
       .useClass(FakeRabbitmqService);
 
     return configure ? configure(withFakeBroker) : withFakeBroker;
-  });
+  }, extraImports);
 }
 
 export async function makeBrokerModuleRef(
-  configure?: (builder: TestingModuleBuilder) => TestingModuleBuilder
+  configure?: (builder: TestingModuleBuilder) => TestingModuleBuilder,
+  extraImports: Type[] = []
 ): Promise<TestingModule> {
   let builder = Test.createTestingModule({
-    imports: [AppModule, EnvModule, EventsModule],
+    imports: [AppModule, EnvModule, EventsModule, ...extraImports],
     providers: [],
   });
 
