@@ -6,10 +6,12 @@ import {
   PAYMENT_GATEWAY_DELAY,
   randomLatency,
 } from './gateway/fake-payment-gateway.service';
+import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
 
 @Module({
   imports: [TypeOrmModule.forFeature([Payment])],
+  controllers: [PaymentsController],
   providers: [
     FakePaymentGatewayService,
     PaymentsService,

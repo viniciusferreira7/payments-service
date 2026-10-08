@@ -62,6 +62,7 @@ describe('Swagger (e2e)', () => {
       '/health/live',
       '/health/ready',
       '/health/startup',
+      '/payments/{orderId}',
     ]);
   });
 
@@ -152,5 +153,11 @@ describe('Swagger (e2e)', () => {
       '500',
     ]);
     expect(statusesFor('/dlq/purge', 'delete')).toEqual(['200', '401', '500']);
+    expect(statusesFor('/payments/{orderId}', 'get')).toEqual([
+      '200',
+      '400',
+      '401',
+      '404',
+    ]);
   });
 });
