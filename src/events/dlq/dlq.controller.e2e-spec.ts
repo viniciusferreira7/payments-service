@@ -14,8 +14,12 @@ import {
   makePaymentOrder,
   makeRejectedPaymentOrder,
 } from 'test/factories/make-payment-order';
+import { resetDatabase } from 'test/utils/reset-database';
 import { waitUntil } from 'test/utils/wait-until';
+import type { Repository } from 'typeorm';
 import { EnvService } from '@/env/env.service';
+import { Payment } from '@/payments/entities/payment.entity';
+import { PAYMENT_GATEWAY_DELAY } from '@/payments/gateway/fake-payment-gateway.service';
 
 const ORDER_OK = '9c1a7e52-3b4d-4f6a-8e9b-1a2b3c4d5e6f';
 const ORDER_A = '1f2e3d4c-5b6a-4978-8a69-5a4b3c2d1e0f';
@@ -27,24 +31,30 @@ describe('DlqController (e2e)', () => {
   let app: INestApplication;
   let broker: BrokerHarness;
   let dlq: ReturnType<typeof makeDlqClient>;
+  let payments: Repository<Payment>;
 
   beforeAll(async () => {
     const moduleRef = await makeBrokerModuleRef((builder) =>
-      builder.overrideProvider(EnvService).useValue(
-        makeEnvService({
-          RABBITMQ_QUEUE_PAYMENTS: topology.queue,
-          RABBITMQ_EXCHANGE: topology.exchange,
-          RABBITMQ_ROUTING_KEY_PAYMENT_ORDER: topology.routingKey,
-          // A rejected message only reaches the DLQ once its retries are
-          // spent. Production waits 30s per attempt; the spec runs the same
-          // loop in milliseconds so the wait windows below still hold.
-          RABBITMQ_RETRY_MAX_ATTEMPTS: 1,
-          RABBITMQ_RETRY_DELAY_MS: 100,
-        })
-      )
+      builder
+        .overrideProvider(EnvService)
+        .useValue(
+          makeEnvService({
+            RABBITMQ_QUEUE_PAYMENTS: topology.queue,
+            RABBITMQ_EXCHANGE: topology.exchange,
+            RABBITMQ_ROUTING_KEY_PAYMENT_ORDER: topology.routingKey,
+            // A rejected message only reaches the DLQ once its retries are
+            // spent. Production waits 30s per attempt; the spec runs the same
+            // loop in milliseconds so the wait windows below still hold.
+            RABBITMQ_RETRY_MAX_ATTEMPTS: 1,
+            RABBITMQ_RETRY_DELAY_MS: 100,
+          })
+        )
+        .overrideProvider(PAYMENT_GATEWAY_DELAY)
+        .useValue(() => Promise.resolve())
     );
 
     app = await startApp(moduleRef);
+    payments = (await resetDatabase(app)).getRepository(Payment);
     broker = makeBrokerHarness(app, topology);
     dlq = makeDlqClient(app);
 
@@ -140,6 +150,11 @@ describe('DlqController (e2e)', () => {
     });
 
     await broker.waitForDrainedQueues();
+    // Drained queues alone cannot tell an accepted order from one waiting in
+    // the retry queue; the payment row can.
+    await waitUntil('the order is charged', async () =>
+      payments.existsBy({ orderId: ORDER_OK })
+    );
   });
 
   it('dead letters a reprocessed order the consumer rejects again', async () => {
@@ -183,6 +198,14 @@ describe('DlqController (e2e)', () => {
     expect(body).toEqual({ success: true, processed: 2, failed: 0 });
 
     await broker.waitForDrainedQueues();
+    await waitUntil(
+      'both orders are charged',
+      async () =>
+        (await payments.countBy([
+          { orderId: ORDER_A },
+          { orderId: ORDER_B },
+        ])) === 2
+    );
   });
 
   it('discards a single message and leaves the rest', async () => {

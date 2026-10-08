@@ -6,6 +6,7 @@ import {
 import { z } from 'zod';
 import { toCents } from '@/common/money';
 import { metrics } from '@/observability/metrics';
+import { PaymentsService } from '@/payments/payments.service';
 import { getErrorDetails } from '@/utils/error.util';
 import type { PaymentOrderMessage } from '../interfaces/payments-queue.interface';
 import { PaymentQueueService } from '../payment-queue/payment-queue.service';
@@ -16,7 +17,10 @@ const uuid = z.uuid();
 export class PaymentConsumerService implements OnApplicationBootstrap {
   private readonly logger = new Logger(PaymentConsumerService.name);
 
-  constructor(private readonly paymentQueueService: PaymentQueueService) {}
+  constructor(
+    private readonly paymentQueueService: PaymentQueueService,
+    private readonly paymentsService: PaymentsService
+  ) {}
 
   async onApplicationBootstrap() {
     this.logger.log('Starting Payment Consumer Service');
@@ -61,9 +65,9 @@ export class PaymentConsumerService implements OnApplicationBootstrap {
         payment_method: message.paymentMethod,
       });
 
-      //TODO: Implement payment service
-
       this.logger.log('Payment order received and validated');
+
+      await this.paymentsService.processPayment(message);
     } catch (error) {
       const errorDetails = getErrorDetails(error);
 

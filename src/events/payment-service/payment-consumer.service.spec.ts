@@ -1,6 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { makePaymentOrder } from 'test/factories/make-payment-order';
+import { PaymentsService } from '@/payments/payments.service';
 import type { PaymentOrderMessage } from '../interfaces/payments-queue.interface';
 import { PaymentQueueService } from '../payment-queue/payment-queue.service';
 import { PaymentConsumerService } from './payment-consumer.service';
@@ -15,6 +16,7 @@ describe('PaymentConsumerService', () => {
   let paymentQueueService: {
     consumePaymentOrders: ReturnType<typeof vi.fn>;
   };
+  let paymentsService: { processPayment: ReturnType<typeof vi.fn> };
   let log: ReturnType<typeof vi.spyOn>;
   let error: ReturnType<typeof vi.spyOn>;
   let debug: ReturnType<typeof vi.spyOn>;
@@ -42,10 +44,15 @@ describe('PaymentConsumerService', () => {
       consumePaymentOrders: vi.fn().mockResolvedValue(undefined),
     };
 
+    paymentsService = {
+      processPayment: vi.fn().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PaymentConsumerService,
         { provide: PaymentQueueService, useValue: paymentQueueService },
+        { provide: PaymentsService, useValue: paymentsService },
       ],
     }).compile();
 
@@ -173,6 +180,35 @@ describe('PaymentConsumerService', () => {
         );
       }
     );
+
+    it('processes a valid message', async () => {
+      const handler = await getRegisteredHandler();
+      const order = makePaymentOrder<PaymentOrderMessage>();
+
+      await handler(order);
+
+      expect(paymentsService.processPayment).toHaveBeenCalledWith(order);
+    });
+
+    it('never processes an invalid message', async () => {
+      const handler = await getRegisteredHandler();
+
+      await expect(
+        handler(makePaymentOrder<PaymentOrderMessage>({ orderId: 'x' }))
+      ).rejects.toThrow('Invalid payment message received');
+
+      expect(paymentsService.processPayment).not.toHaveBeenCalled();
+    });
+
+    it('rethrows a processing failure so the broker retries it', async () => {
+      const handler = await getRegisteredHandler();
+      const failure = new Error('database down');
+      paymentsService.processPayment.mockRejectedValue(failure);
+
+      await expect(
+        handler(makePaymentOrder<PaymentOrderMessage>())
+      ).rejects.toThrow(failure);
+    });
 
     it('stops at the first validation failure', async () => {
       const handler = await getRegisteredHandler();

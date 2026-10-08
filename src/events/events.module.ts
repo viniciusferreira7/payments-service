@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { PaymentsModule } from '@/payments/payments.module';
 import { DlqController } from './dlq/dlq.controller';
 import { DlqService } from './dlq/dlq.service';
 import { PaymentQueueService } from './payment-queue/payment-queue.service';
@@ -6,6 +7,7 @@ import { PaymentConsumerService } from './payment-service/payment-consumer.servi
 import { RabbitmqService } from './rabbitmq/rabbitmq.service';
 
 @Module({
+  imports: [PaymentsModule],
   controllers: [DlqController],
   providers: [
     RabbitmqService,
