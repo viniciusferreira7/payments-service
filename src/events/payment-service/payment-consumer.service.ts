@@ -4,7 +4,8 @@ import {
   type OnApplicationBootstrap,
 } from '@nestjs/common';
 import { z } from 'zod';
-import { toCents } from '@/common/money';
+import { MAX_MONEY_CENTS, toCents } from '@/common/money';
+import { PAYMENT_METHODS } from '@/common/payment-methods';
 import { metrics } from '@/observability/metrics';
 import { PaymentsService } from '@/payments/payments.service';
 import { getErrorDetails } from '@/utils/error.util';
@@ -12,6 +13,24 @@ import type { PaymentOrderMessage } from '../interfaces/payments-queue.interface
 import { PaymentQueueService } from '../payment-queue/payment-queue.service';
 
 const uuid = z.uuid();
+
+const KNOWN_PAYMENT_METHODS = new Set<string>(PAYMENT_METHODS);
+
+/** A finite money value with at most 2 decimals, as decimal(10,2) stores it. */
+const isMoney = (value: unknown): value is number =>
+  typeof value === 'number' &&
+  Number.isFinite(value) &&
+  Math.abs(value * 100 - toCents(value)) < 1e-6;
+
+/**
+ * The amount sum alone does not make an order consistent: a negative price can
+ * offset another item, so every item is checked on its own first.
+ */
+const isValidItem = (item: { quantity: unknown; price: unknown }) =>
+  Number.isInteger(item.quantity) &&
+  (item.quantity as number) >= 1 &&
+  isMoney(item.price) &&
+  item.price > 0;
 
 @Injectable()
 export class PaymentConsumerService implements OnApplicationBootstrap {
@@ -105,7 +124,11 @@ export class PaymentConsumerService implements OnApplicationBootstrap {
       return false;
     }
 
-    if (!message.amount || message.amount <= 0) {
+    if (
+      !isMoney(message.amount) ||
+      message.amount <= 0 ||
+      toCents(message.amount) > MAX_MONEY_CENTS
+    ) {
       metrics.payment_orders_rejected.add(1, { reason: 'invalid_amount' });
       this.logger.error('Invalid amount in payment message');
       return false;
@@ -119,9 +142,33 @@ export class PaymentConsumerService implements OnApplicationBootstrap {
       return false;
     }
 
+    if (!KNOWN_PAYMENT_METHODS.has(message.paymentMethod)) {
+      metrics.payment_orders_rejected.add(1, {
+        reason: 'unknown_payment_method',
+      });
+      this.logger.error('Unknown paymentMethod in payment message');
+      return false;
+    }
+
     if (!message.items || message.items.length === 0) {
       metrics.payment_orders_rejected.add(1, { reason: 'missing_items' });
       this.logger.error('No items in payment message');
+      return false;
+    }
+
+    if (!message.items.every(isValidItem)) {
+      metrics.payment_orders_rejected.add(1, { reason: 'invalid_item' });
+      this.logger.error('Invalid item in payment message');
+      return false;
+    }
+
+    // An absent discount is left to the total check below, which refuses it.
+    if (
+      message.discount !== undefined &&
+      (!isMoney(message.discount) || message.discount < 0)
+    ) {
+      metrics.payment_orders_rejected.add(1, { reason: 'invalid_discount' });
+      this.logger.error('Invalid discount in payment message');
       return false;
     }
 

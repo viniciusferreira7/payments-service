@@ -259,6 +259,74 @@ describe('PaymentConsumerService', () => {
     });
   });
 
+  describe('validating the order contents', () => {
+    const item = { productId: 'product-1', quantity: 1, price: 100 };
+
+    it.each<[string, Partial<PaymentOrderMessage>, string]>([
+      [
+        'an item has a negative price that offsets another',
+        {
+          amount: 1,
+          items: [item, { ...item, productId: 'product-2', price: -99 }],
+        },
+        'Invalid item in payment message',
+      ],
+      [
+        'an item has a zero quantity',
+        { amount: 100, items: [item, { ...item, quantity: 0 }] },
+        'Invalid item in payment message',
+      ],
+      [
+        'an item has a fractional quantity',
+        { amount: 50, items: [{ ...item, quantity: 0.5 }] },
+        'Invalid item in payment message',
+      ],
+      [
+        'an item price has more than 2 decimals',
+        { amount: 100, items: [{ ...item, price: 100.001 }] },
+        'Invalid item in payment message',
+      ],
+      [
+        'the discount is negative',
+        { amount: 110, discount: -10 },
+        'Invalid discount in payment message',
+      ],
+      [
+        'the amount does not fit decimal(10,2)',
+        {
+          amount: 100_000_000,
+          items: [{ ...item, price: 100_000_000 }],
+        },
+        'Invalid amount in payment message',
+      ],
+      [
+        'the payment method is unknown',
+        { paymentMethod: 'bitcoin' },
+        'Unknown paymentMethod in payment message',
+      ],
+    ])('rejects the message when %s', async (_case, overrides, reason) => {
+      const handler = await getRegisteredHandler();
+
+      await expect(
+        handler(makePaymentOrder<PaymentOrderMessage>(overrides))
+      ).rejects.toThrow('Invalid payment message received');
+
+      expect(error).toHaveBeenCalledWith(reason);
+      expect(paymentsService.processPayment).not.toHaveBeenCalled();
+    });
+
+    it.each(['credit_card', 'debit_card', 'pix', 'boleto'])(
+      'accepts the %s payment method',
+      async (paymentMethod) => {
+        const handler = await getRegisteredHandler();
+
+        await expect(
+          handler(makePaymentOrder<PaymentOrderMessage>({ paymentMethod }))
+        ).resolves.toBeUndefined();
+      }
+    );
+  });
+
   describe('validating the amount against the order total', () => {
     it('accepts an amount equal to the items total', async () => {
       const handler = await getRegisteredHandler();
