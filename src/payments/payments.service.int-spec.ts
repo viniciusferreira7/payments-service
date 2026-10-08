@@ -95,6 +95,33 @@ describe('PaymentsService (integration)', () => {
       expect(await payments.countBy({ orderId: message.orderId })).toBe(1);
     });
 
+    it('charges once when the same order is delivered twice at the same time', async () => {
+      const charge = gateway.charge.bind(gateway);
+      const spy = vi
+        .spyOn(gateway, 'charge')
+        .mockImplementation(async (args) => {
+          // Hold the charge open long enough for the second delivery to read
+          // the row while the first is still at the acquirer.
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          return charge(args);
+        });
+      const message = order(50);
+
+      const [first, second] = await Promise.all([
+        service.processPayment(message),
+        service.processPayment(message),
+      ]);
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(second.transactionId).toBe(first.transactionId);
+      expect(
+        await payments.findOneByOrFail({ orderId: message.orderId })
+      ).toMatchObject({
+        status: PaymentStatus.APPROVED,
+        transactionId: first.transactionId,
+      });
+    });
+
     it('finishes a payment a previous attempt left pending', async () => {
       const message = order(50);
       await payments.insert({

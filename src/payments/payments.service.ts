@@ -18,9 +18,11 @@ export class PaymentsService {
 
   /**
    * Charges an order once, however many times its message is delivered: the
-   * row is keyed by `order_id`, and only a payment still `pending` reaches
-   * the gateway. A rejection is an outcome, not a failure — it returns, so the
-   * message is acked. Anything unexpected propagates to the retry/DLQ loop.
+   * row is keyed by `order_id`, and it is locked (`FOR UPDATE`) while it is
+   * charged, so a concurrent delivery of the same order waits, then finds it
+   * no longer `pending` and charges nothing. A rejection is an outcome, not a
+   * failure — it returns, so the message is acked. Anything unexpected rolls
+   * back to `pending` and propagates to the retry/DLQ loop.
    */
   async processPayment(message: PaymentOrderMessage): Promise<Payment> {
     await this.payments
@@ -36,29 +38,34 @@ export class PaymentsService {
       .orIgnore()
       .execute();
 
-    const payment = await this.payments.findOneByOrFail({
-      orderId: message.orderId,
+    return this.payments.manager.transaction(async (manager) => {
+      const payment = await manager.findOneOrFail(Payment, {
+        where: { orderId: message.orderId },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (payment.status !== PaymentStatus.PENDING) {
+        this.logger.log(
+          `Payment for order ${payment.orderId} already processed`
+        );
+
+        return payment;
+      }
+
+      const result = await this.gateway.charge({
+        orderId: payment.orderId,
+        amount: payment.amount,
+      });
+
+      payment.status = result.approved
+        ? PaymentStatus.APPROVED
+        : PaymentStatus.REJECTED;
+      payment.transactionId = result.transactionId;
+      payment.rejectionReason = result.rejectionReason ?? null;
+      payment.processedAt = new Date();
+
+      return manager.save(payment);
     });
-
-    if (payment.status !== PaymentStatus.PENDING) {
-      this.logger.log(`Payment for order ${payment.orderId} already processed`);
-
-      return payment;
-    }
-
-    const result = await this.gateway.charge({
-      orderId: payment.orderId,
-      amount: payment.amount,
-    });
-
-    payment.status = result.approved
-      ? PaymentStatus.APPROVED
-      : PaymentStatus.REJECTED;
-    payment.transactionId = result.transactionId;
-    payment.rejectionReason = result.rejectionReason ?? null;
-    payment.processedAt = new Date();
-
-    return this.payments.save(payment);
   }
 
   /** Another user's payment answers like a missing one: no hint it exists. */
