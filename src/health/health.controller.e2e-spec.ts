@@ -1,7 +1,8 @@
 import type { INestApplication } from '@nestjs/common';
 import request from 'supertest';
-import { makeModuleRef, startApp } from 'test/factories/make-module-ref';
+import { makeBrokerModuleRef, startApp } from 'test/factories/make-module-ref';
 import { DataSource } from 'typeorm';
+import { RabbitmqService } from '@/events/rabbitmq/rabbitmq.service';
 import { ShutdownService } from './shutdown.service';
 
 describe('Health probes (E2E)', () => {
@@ -10,7 +11,7 @@ describe('Health probes (E2E)', () => {
     let shutdownService: ShutdownService;
 
     beforeAll(async () => {
-      const moduleRef = await makeModuleRef();
+      const moduleRef = await makeBrokerModuleRef();
 
       app = await startApp(moduleRef);
       shutdownService = moduleRef.get(ShutdownService);
@@ -42,6 +43,10 @@ describe('Health probes (E2E)', () => {
             status: 'up',
             responseTime: expect.any(Number),
           },
+          rabbitmq: {
+            status: 'up',
+            responseTime: expect.any(Number),
+          },
         },
       });
     });
@@ -55,6 +60,7 @@ describe('Health probes (E2E)', () => {
         uptime: expect.any(Number),
         checks: {
           database: { status: 'up', responseTime: expect.any(Number) },
+          rabbitmq: { status: 'up', responseTime: expect.any(Number) },
         },
       });
     });
@@ -65,6 +71,7 @@ describe('Health probes (E2E)', () => {
         .expect(200);
 
       expect(response.body.checks.database.status).toBe('up');
+      expect(response.body.checks.rabbitmq.status).toBe('up');
     });
 
     it('fails the readiness probe once the process starts shutting down', async () => {
@@ -87,7 +94,7 @@ describe('Health probes (E2E)', () => {
     let app: INestApplication;
 
     beforeAll(async () => {
-      const moduleRef = await makeModuleRef((builder) =>
+      const moduleRef = await makeBrokerModuleRef((builder) =>
         builder.overrideProvider(DataSource).useFactory({
           factory() {
             return {
@@ -132,6 +139,10 @@ describe('Health probes (E2E)', () => {
             status: 'down',
             responseTime: expect.any(Number),
           },
+          rabbitmq: {
+            status: 'up',
+            responseTime: expect.any(Number),
+          },
         },
       });
     });
@@ -145,6 +156,46 @@ describe('Health probes (E2E)', () => {
         uptime: expect.any(Number),
         checks: {
           database: { status: 'down', responseTime: expect.any(Number) },
+          rabbitmq: { status: 'up', responseTime: expect.any(Number) },
+        },
+      });
+    });
+
+    it('keeps the liveness probe passing', async () => {
+      await request(app.getHttpServer()).get('/health/live').expect(200);
+    });
+  });
+
+  describe('with an unreachable broker', () => {
+    let app: INestApplication;
+    let rabbitmqService: RabbitmqService;
+
+    beforeAll(async () => {
+      const moduleRef = await makeBrokerModuleRef();
+
+      app = await startApp(moduleRef);
+      rabbitmqService = moduleRef.get(RabbitmqService);
+    });
+
+    afterAll(async () => {
+      vi.restoreAllMocks();
+      await app.close();
+    });
+
+    it('fails the readiness probe when the channel is gone', async () => {
+      vi.spyOn(rabbitmqService, 'getChannel').mockReturnValue(
+        undefined as unknown as ReturnType<RabbitmqService['getChannel']>
+      );
+
+      const response = await request(app.getHttpServer()).get('/health/ready');
+
+      expect(response.statusCode).toBe(503);
+      expect(response.body).toEqual({
+        status: 'error',
+        uptime: expect.any(Number),
+        checks: {
+          database: { status: 'up', responseTime: expect.any(Number) },
+          rabbitmq: { status: 'down', responseTime: expect.any(Number) },
         },
       });
     });

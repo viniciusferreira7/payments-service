@@ -15,6 +15,6 @@ import { RabbitmqService } from './rabbitmq/rabbitmq.service';
     PaymentConsumerService,
     DlqService,
   ],
-  exports: [PaymentQueueService],
+  exports: [PaymentQueueService, RabbitmqService],
 })
 export class EventsModule {}

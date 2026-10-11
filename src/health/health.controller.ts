@@ -7,6 +7,7 @@ import {
 } from '@nestjs/swagger';
 import { Public } from '@/auth/decorators/public.decorator';
 import { DatabaseHealthIndicator } from './database-health.indicator';
+import { RabbitmqHealthIndicator } from './rabbitmq-health.indicator';
 import { ShutdownService } from './shutdown.service';
 
 /** Minimal surface of the underlying HTTP reply, so this file does not depend
@@ -19,6 +20,7 @@ type HttpReply = { status: (code: number) => unknown };
 export class HealthController {
   constructor(
     private readonly databaseHealthIndicator: DatabaseHealthIndicator,
+    private readonly rabbitmqHealthIndicator: RabbitmqHealthIndicator,
     private readonly shutdownService: ShutdownService
   ) {}
 
@@ -26,9 +28,12 @@ export class HealthController {
   @ApiOperation({
     summary: 'Health check: same verdict as the readiness probe',
   })
-  @ApiOkResponse({ description: 'The service and its database are up' })
+  @ApiOkResponse({
+    description: 'The service, its database and its broker are up',
+  })
   @ApiServiceUnavailableResponse({
-    description: 'The database is down or the process is shutting down',
+    description:
+      'The database or the broker is down, or the process is shutting down',
   })
   health(@Res({ passthrough: true }) reply: HttpReply) {
     return this.readiness(reply);
@@ -74,14 +79,18 @@ export class HealthController {
       return { status: 'shutting_down', uptime };
     }
 
-    const database = await this.databaseHealthIndicator.check();
+    const [database, rabbitmq] = await Promise.all([
+      this.databaseHealthIndicator.check(),
+      this.rabbitmqHealthIndicator.check(),
+    ]);
+    const checks = { database, rabbitmq };
 
-    if (database.status === 'down') {
+    if (database.status === 'down' || rabbitmq.status === 'down') {
       reply.status(503);
 
-      return { status: 'error', uptime, checks: { database } };
+      return { status: 'error', uptime, checks };
     }
 
-    return { status: 'ok', uptime, checks: { database } };
+    return { status: 'ok', uptime, checks };
   }
 }
